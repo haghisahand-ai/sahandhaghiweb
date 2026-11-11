@@ -18,14 +18,12 @@ class Sahand_REST_API {
     }
 
     public static function register_routes() {
-        // System Health & Security Telemetry
         register_rest_route(self::NAMESPACE, '/health', array(
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => array(__CLASS__, 'get_health_status'),
             'permission_callback' => '__return_true',
         ));
 
-        // Public Projects Query Endpoint
         register_rest_route(self::NAMESPACE, '/projects', array(
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => array(__CLASS__, 'get_projects'),
@@ -35,11 +33,11 @@ class Sahand_REST_API {
                     'required'          => false,
                     'sanitize_callback' => 'sanitize_text_field',
                     'default'           => 'fa',
+                    'validate_callback' => array(__CLASS__, 'validate_language'),
                 ),
             ),
         ));
 
-        // Secure Contact Form Ingress Endpoint
         register_rest_route(self::NAMESPACE, '/contact', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array(__CLASS__, 'handle_contact_submission'),
@@ -47,39 +45,43 @@ class Sahand_REST_API {
             'args'                => array(
                 'name' => array(
                     'required'          => true,
+                    'type'              => 'string',
+                    'maxLength'         => 100,
                     'sanitize_callback' => 'sanitize_text_field',
                 ),
                 'email' => array(
                     'required'          => true,
+                    'type'              => 'string',
+                    'format'            => 'email',
                     'sanitize_callback' => 'sanitize_email',
                 ),
                 'message' => array(
                     'required'          => true,
+                    'type'              => 'string',
+                    'maxLength'         => 5000,
                     'sanitize_callback' => 'sanitize_textarea_field',
                 ),
                 '_wpnonce' => array(
                     'required'          => true,
+                    'type'              => 'string',
                     'sanitize_callback' => 'sanitize_text_field',
                 ),
             ),
         ));
     }
 
+    public static function validate_language($value) {
+        return in_array($value, array('fa', 'en', 'tr'), true);
+    }
+
     public static function get_health_status() {
         return new WP_REST_Response(array(
-            'status'       => 'operational',
-            'platform'     => 'SAHAND Personal Technology Hub',
-            'version'      => SAHAND_CORE_VERSION,
-            'architecture' => 'Decoupled WordPress Theme + Plugin',
-            'languages'    => array('fa', 'en', 'tr'),
-            'security'     => 'Defense-in-Depth / Rate-Limiting Armed',
-            'timestamp'    => gmdate('c'),
+            'status'    => 'ok',
+            'timestamp' => gmdate('c'),
         ), 200);
     }
 
     public static function get_projects($request) {
-        $lang = $request->get_param('lang') ?: 'fa';
-
         $query_args = array(
             'post_type'      => 'sahand_project',
             'post_status'    => 'publish',
@@ -100,10 +102,10 @@ class Sahand_REST_API {
                     'title'     => get_the_title(),
                     'slug'      => get_post_field('post_name', $id),
                     'excerpt'   => get_the_excerpt(),
-                    'status'    => get_post_meta($id, '_sahand_project_status', true),
-                    'github'    => get_post_meta($id, '_sahand_project_github', true),
-                    'demo_url'  => get_post_meta($id, '_sahand_project_demo_url', true),
-                    'timeline'  => get_post_meta($id, '_sahand_project_timeline', true),
+                    'status'    => sanitize_text_field(get_post_meta($id, '_sahand_project_status', true)),
+                    'github'    => esc_url_raw(get_post_meta($id, '_sahand_project_github', true)),
+                    'demo_url'  => esc_url_raw(get_post_meta($id, '_sahand_project_demo_url', true)),
+                    'timeline'  => sanitize_text_field(get_post_meta($id, '_sahand_project_timeline', true)),
                     'permalink' => get_permalink($id),
                 );
             }
@@ -114,7 +116,6 @@ class Sahand_REST_API {
     }
 
     public static function handle_contact_submission($request) {
-        // Enforce Transient Rate Limiting: max 5 submissions per 10 minutes
         if (!Sahand_Security::check_rate_limit('contact_form', 5, 600)) {
             return new WP_REST_Response(array(
                 'success' => false,
@@ -122,37 +123,51 @@ class Sahand_REST_API {
             ), 429);
         }
 
-        // Verify Nonce
         $nonce = $request->get_param('_wpnonce');
-        if (!wp_verify_nonce($nonce, 'sahand_contact_nonce')) {
+        if (!is_string($nonce) || !wp_verify_nonce($nonce, 'sahand_contact_nonce')) {
             return new WP_REST_Response(array(
                 'success' => false,
                 'message' => 'Invalid or expired security token.',
             ), 403);
         }
 
-        $name    = $request->get_param('name');
-        $email   = $request->get_param('email');
-        $message = $request->get_param('message');
+        $name    = sanitize_text_field((string) $request->get_param('name'));
+        $email   = sanitize_email((string) $request->get_param('email'));
+        $message = sanitize_textarea_field((string) $request->get_param('message'));
 
-        if (!is_email($email)) {
+        if ('' === trim($name) || !is_email($email) || '' === trim($message)) {
             return new WP_REST_Response(array(
                 'success' => false,
-                'message' => 'Invalid email address.',
+                'message' => 'Please provide a valid name, email address, and message.',
             ), 400);
         }
 
-        // In a production environment, send notification email to admin
-        $admin_email = get_option('admin_email');
-        $subject = sprintf('[SAHAND Hub Contact] Message from %s', $name);
-        $headers = array('Content-Type: text/plain; charset=UTF-8', 'Reply-To: ' . $email);
-        $body = "Name: $name\nEmail: $email\n\nMessage:\n$message";
+        $admin_email = sanitize_email(get_option('admin_email'));
+        if (!is_email($admin_email)) {
+            return new WP_REST_Response(array(
+                'success' => false,
+                'message' => 'Contact delivery is not configured. Please use an alternative contact method.',
+            ), 503);
+        }
 
-        wp_mail($admin_email, $subject, $body, $headers);
+        $subject = sprintf('[SAHAND Hub Contact] Message from %s', $name);
+        $headers = array(
+            'Content-Type: text/plain; charset=UTF-8',
+            'Reply-To: ' . $email,
+        );
+        $body = "Name: {$name}\nEmail: {$email}\n\nMessage:\n{$message}";
+
+        $sent = wp_mail($admin_email, $subject, $body, $headers);
+        if (!$sent) {
+            return new WP_REST_Response(array(
+                'success' => false,
+                'message' => 'The message could not be delivered. Please try again later.',
+            ), 503);
+        }
 
         return new WP_REST_Response(array(
             'success' => true,
-            'message' => 'Your message has been securely submitted.',
+            'message' => 'Your message has been delivered.',
         ), 200);
     }
 }
