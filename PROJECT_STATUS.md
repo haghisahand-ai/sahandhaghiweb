@@ -1,34 +1,43 @@
-# SAHAND — Master Project Status Table
+# SAHAND — Master Project Status
+
 **Platform:** SAHAND Personal Technology Hub (`https://sahandhaghi.site`)  
-**Architecture:** Decoupled WordPress Theme (`sahand-theme`) + Core Plugin (`sahand-core`)  
-**Current Phase:** Phase 03 & 04 (Interactive Intro & WordPress Foundation Implemented)  
-**Last Updated:** November 2026  
+**Architecture target:** WordPress theme (`sahand-theme`) + independent core plugin (`sahand-core`)  
+**Languages target:** Persian (`fa-IR`), English (`en-US`), Turkish (`tr-TR`)  
+**Audit baseline:** 11 November 2026  
+**Current state:** Prototype and WordPress foundation; not production-ready.
 
----
+> Statuses below describe repository evidence only. No live-host deployment, penetration test, production email delivery test, or full browser QA has been performed as part of this repository review.
 
-### Project Status Table
+| Phase | Area | Evidence-based status | Remaining acceptance criteria |
+|---|---|---|---|
+| 01 | Product definition and architecture | Documented | Confirm hosting constraints and finalize decisions against the actual hosting account |
+| 02 | Brand and design system | Implemented in prototype | Verify visual system in the native WordPress theme at desktop, tablet, and mobile sizes |
+| 03 | Intro experience | Implemented in React prototype and partial PHP theme assets | Verify the actual WordPress intro, language routing, persistence, keyboard access, and reduced-motion behavior |
+| 04 | WordPress foundation | Partially implemented | Activate theme/plugin on a clean WordPress staging site and verify lifecycle, rewrite rules, and compatibility |
+| 05 | Core website and localization | Prototype | Build native WordPress page templates and connect real translated content; verify language switching on equivalent pages |
+| 06 | Content management | Partially implemented | Test all CPTs, taxonomies, meta boxes, permissions, and REST exposure with role-based accounts |
+| 07 | Security | Partially implemented | Complete threat-model controls, atomic/edge rate limiting, CSP design, secret scanning, and security testing |
+| 08 | SEO and performance | Partially implemented | Validate canonical URLs, hreflang against actual translations, structured data, caching, image optimization, and Core Web Vitals |
+| 09 | Testing and hardening | Not verified | Add automated PHP/JS tests, run lint/build, accessibility checks, and staging regression tests |
+| 10 | AI integration | Not implemented in WordPress | Build and test a server-side provider gateway; keep credentials out of client bundles |
+| 11 | Staging and deployment | Not started | Establish staging, deployment/rollback process, backups, and environment configuration |
+| 12 | Production readiness | Not started | Complete release checklist and verify the live site with evidence |
 
-| Phase | Phase Name | Status | Evidence | Remaining Work | Dependencies |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **01** | **Product Definition & Architecture** | **Verified** | `docs/ARCHITECTURE_PHASE_01.md`, `docs/SECURITY_ARCHITECTURE_AND_THREAT_MODEL.md` | None | None |
-| **02** | **Brand and Design System & Logo** | **Verified** | `src/components/SahandLogo.tsx`, `public/favicon.svg`, `docs/LOCALIZATION_AND_BRAND_IDENTITY_DICTIONARY.md` | Interior component templates | Phase 01 |
-| **03** | **Interactive Intro Experience** | **Verified** | Approved neural canvas preserved, Mount Sahand vector emblem integrated, `template-parts/intro/intro-portal.php` | Production domain verification | Phase 02 |
-| **04** | **WordPress Foundation** | **Verified** | Complete `sahand-theme` and `sahand-core` plugin created in workspace | Polylang Pro plugin install on live host | Phase 03 |
-| **05** | **Core Website & Localization** | **Verified** | Complete native trilingual copy in `src/App.tsx`, Persian half-space standards, Turkish diacritics, localized telemetry and terminals | Single post templates (About, Projects, Launchpad, AI Lab, Contact) | Phase 04 |
-| 06 | Content Management & Admin UI | Implemented | `class-meta-fields.php`, `class-post-types.php`, `class-taxonomies.php` | Translation linking in WP Admin | Phase 05 |
-| 07 | Security Implementation | Implemented | `class-security.php`, nonces, capability checks, rate-limiter, security headers | Automated security scanner review | Phase 06 |
-| 08 | Performance and SEO | In Progress | Semantic HTML, hreflang tags (`inc/multilingual.php`), logical CSS properties | Image optimization pipeline & cache configs | Phase 07 |
-| 09 | Testing and Hardening | In Progress | TypeScript/build check verified, zero-error lint pass, RTL bidirectional tests | Live host penetration testing | Phase 08 |
-| 10 | AI Integration Preparation | In Progress | `sahand_ai_tool` CPT registered, Gemini server-side gateway architecture defined | Activation of server-side Gemini proxy | Phase 09 |
-| 11 | Staging and Deployment | Queued | Nginx configuration & deployment guide drafted | Live host credentials & domain cutover | Phase 10 |
-| 12 | Production Readiness | Queued | Final QA report & audit checklist | Deployment to `https://sahandhaghi.site` | Phase 11 |
+## Repository findings requiring follow-up
 
----
+- The React AI Lab currently returns a predefined string after a timeout; it is a simulation, not a Gemini request.
+- The React contact form currently changes its UI state after a timeout; it does not submit a message.
+- The WordPress REST contact handler previously returned success regardless of the result of `wp_mail()`. The audit-fixes branch now checks delivery success and returns an error when delivery fails.
+- Meta-box saves previously called the object capability `edit_post` without the target post ID. The audit-fixes branch now checks the capability against the actual post and restricts save hooks to the intended post types.
+- The current transient rate limiter uses a non-atomic read/increment/write sequence. It is not sufficient as the sole production anti-abuse control under concurrent traffic.
+- A restrictive Content-Security-Policy has not been enabled. It must be designed against the actual scripts, styles, fonts, and integrations before rollout; adding a generic policy could break the site.
 
-### Status Labels Key
-- **Not Started:** Work has not commenced.
-- **In Progress:** Active implementation underway.
-- **Implemented:** Source code and components created and validated locally.
-- **Tested:** Tested for functionality, accessibility, and syntax.
-- **Verified:** Fully reviewed against architecture and acceptance criteria.
-- **Blocked:** Awaiting external dependency, credentials, or hosting access.
+## Status definitions
+
+- **Not started:** No implementation evidence in the repository.
+- **Documented:** Design or requirements are written, but implementation is not established.
+- **Prototype:** Demonstration or front-end behavior exists but is not connected to production services.
+- **Partially implemented:** Some source code exists; acceptance criteria remain incomplete.
+- **Implemented:** Source code for the defined scope exists.
+- **Tested:** A repeatable test has been run and its result recorded.
+- **Verified:** The implementation has passed its acceptance criteria in the target environment.
