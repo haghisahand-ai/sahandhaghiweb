@@ -1,86 +1,53 @@
 # SAHAND — Master Development Roadmap
 
 **Product:** SAHAND Personal Technology Hub (`https://sahandhaghi.site`)  
-**Architecture:** Decoupled WordPress Theme (`sahand-theme`) + Core Plugin (`sahand-core`)  
-**Languages:** Persian (`fa-IR`, default RTL), English (`en-US`, LTR), Turkish (`tr-TR`, LTR)  
+**Production architecture:** WordPress PHP theme (`sahand-theme`) + independent plugin (`sahand-core`)  
+**Languages:** Persian (`fa-IR`, RTL), English (`en-US`, LTR), Turkish (`tr-TR`, LTR)
 
----
+## Execution principles
 
-## Phase Overview & Execution Strategy
+- React/Vite is a prototype and design-validation environment, not the production application.
+- Production rendering, content management, and business logic must run in WordPress/PHP.
+- A phase is not **Verified** until its acceptance criteria have been tested in the target environment and evidence is recorded.
+- Documentation, mock UI states, and source-code presence do not by themselves establish a working or secure feature.
+- Production deployment requires staging validation, tested backups, rollback capability, and a security review.
 
-```
-[Phase 01: Architecture] ---> [Phase 02: Multilingual] ---> [Phase 03: Design System]
-           |
-           v
-[Phase 04: Prototype]   ---> [Phase 05: WP Theme]    ---> [Phase 06: WP Core Plugin]
-           |
-           v
-[Phase 07: Portfolio]   ---> [Phase 08: Launchpad]   ---> [Phase 09: SEO & Perf]
-           |
-           v
-[Phase 10: AI Integration] -> [Phase 11: Security & Test] -> [Phase 12: Deployment]
-```
+## Phase status
 
----
+| Phase | Workstream | Current status | Exit criteria |
+|---|---|---|---|
+| 01 | Product definition and architecture | Documented | Architecture decisions and hosting constraints confirmed |
+| 02 | Multilingual foundation | Partially implemented | Real fa/en/tr routing, linked translations, correct language switch on equivalent pages |
+| 03 | Brand and design system | Prototype implemented | Approved design implemented consistently in native WordPress templates |
+| 04 | Homepage and intro experience | Prototype / partial theme implementation | Intro preserved and verified on WordPress across languages, devices, and reduced-motion settings |
+| 05 | WordPress theme | Foundation implemented | Complete templates, navigation, responsive behavior, accessible components, and error pages |
+| 06 | WordPress core plugin | Partially implemented | CPTs, taxonomies, metadata, REST routes, and role-based permissions tested |
+| 07 | Portfolio and content sections | Not complete | Dynamic About, Projects, Engineering, Insights, and Contact templates |
+| 08 | Launchpad | Not complete | Dynamic product archive/single pages, versioning, downloads, and changelogs |
+| 09 | SEO and performance | Partially implemented | Correct canonical/hreflang, metadata, structured data, optimized assets, measured Core Web Vitals |
+| 10 | AI integration | Prototype only | Server-side provider gateway, secret management, usage controls, error handling, and real inference tests |
+| 11 | Security and quality assurance | Partially implemented; not verified | Automated tests, role/permission tests, abuse controls, CSP rollout, staging security assessment |
+| 12 | Staging and production deployment | Not started | Reproducible deployment, TLS, backup/restore test, rollback, monitoring, production acceptance |
 
-## Detailed Milestone Breakdown
+## Immediate priorities
 
-### Phase 01: Product Definition and Architecture
-- **Objective:** Establish the foundational architecture, system boundaries, database mapping, hosting prerequisites, multilingual strategy, and risk mitigations.
-- **Key Artifacts:** `docs/ARCHITECTURE_PHASE_01.md`, `PROJECT_STATUS.md`, `ROADMAP.md`.
-- **Status:** **Completed — Awaiting Owner Approval.**
+1. Complete the code review and validation of the open security-fixes pull request.
+2. Test WordPress meta-box permissions and contact delivery on staging.
+3. Replace the non-atomic transient rate limiter with an atomic or edge-enforced control and define trusted proxy/IP handling.
+4. Implement and test native WordPress page/CPT templates and real multilingual page relationships.
+5. Remove prototype-only success claims from React UI or clearly label the UI as a demo until real endpoints exist.
+6. Build the server-side AI gateway only after secret storage, quotas, abuse controls, and error handling are defined.
+7. Run PHP syntax, WordPress coding standards, TypeScript checks, production build, accessibility, responsive, performance, backup/restore, and security tests.
 
-### Phase 02: Multilingual Foundation
-- **Objective:** Establish the trilingual routing engine, configure Polylang Pro taxonomies, implement language switcher components, and verify RTL/LTR locale switching logic.
-- **Key Artifacts:** Language switching hooks, RTL/LTR detection utilities, string translation registry (`sahand-theme/inc/multilingual.php`).
-- **Status:** Queued (Requires Phase 01 signoff).
+## Status definitions
 
-### Phase 03: Brand and Design System
-- **Objective:** Translate the Mount Sahand brand philosophy into a high-precision design system: semantic color tokens, typography hierarchy (Vazirmatn + Inter + JetBrains Mono), spacing scale, card primitives, and accessible form elements.
-- **Key Artifacts:** Core stylesheets (`assets/css/main.css`, `typography.css`, `components.css`), font asset configurations.
-- **Status:** Queued.
+- **Not started:** No implementation evidence.
+- **Documented:** Requirements or design are written; implementation is not established.
+- **Prototype:** Demonstration behavior exists but is not connected to production services.
+- **Partially implemented:** Some source code exists; acceptance criteria remain incomplete.
+- **Implemented:** Source code for the defined scope exists.
+- **Tested:** A repeatable test has been run and its result recorded.
+- **Verified:** Acceptance criteria passed in the target environment with evidence.
+- **Blocked:** An external dependency prevents progress.
 
-### Phase 04: Homepage Prototype
-- **Objective:** Construct a fully functional, interactive trilingual prototype of the Homepage to visually and structurally validate typography, RTL flow, responsive grid, and language switcher behavior in real-time.
-- **Key Artifacts:** Trilingual UI prototype, verification screenshots, responsive testing.
-- **Status:** Queued.
-
-### Phase 05: WordPress Theme (`sahand-theme`)
-- **Objective:** Build the complete standalone WordPress theme directory: `style.css`, `header.php`, `footer.php`, `front-page.php`, `index.php`, 404, templates, navigation menus, and RTL stylesheet (`rtl.css`).
-- **Key Artifacts:** `wordpress/wp-content/themes/sahand-theme/*`.
-- **Status:** Queued.
-
-### Phase 06: WordPress Core Plugin (`sahand-core`)
-- **Objective:** Build the independent core plugin registering 4 Custom Post Types (`sahand_project`, `sahand_product`, `sahand_ai_tool`, `sahand_insight`), custom taxonomies, structured meta boxes, and secure REST API endpoints.
-- **Key Artifacts:** `wordpress/wp-content/plugins/sahand-core/*`.
-- **Status:** Queued.
-
-### Phase 07: Portfolio Sections
-- **Objective:** Implement single and archive templates for About, Projects, Engineering, Insights, and Contact. Connect contact submission handling with nonce verification and transient rate-limiting.
-- **Key Artifacts:** Single CPT templates, archive filters, contact form handler.
-- **Status:** Queued.
-
-### Phase 08: Launchpad
-- **Objective:** Build the product and digital tool release center: version tracking, semver badges, downloadable asset linking, changelog renderers, and interactive demo framing.
-- **Key Artifacts:** `single-sahand_product.php`, `page-launchpad.php`, changelog component.
-- **Status:** Queued.
-
-### Phase 09: SEO and Performance
-- **Objective:** Implement trilingual `hreflang` generation, XML sitemap integration, OpenGraph and Twitter card metadata, semantic schema.org markup, WebP image sizing, and aggressive Core Web Vitals optimization.
-- **Key Artifacts:** SEO hooks, schema generator, caching and minification configuration.
-- **Status:** Queued.
-
-### Phase 10: AI Integration
-- **Objective:** Implement a secure, server-side Gemini API proxy inside `sahand-core`. Build the SAHAND AI Assistant, Smart Translator, Code Explainer, and AI Tools directory grounded in published website content.
-- **Key Artifacts:** `sahand-core/includes/api/class-rest-ai.php`, AI interaction UI, usage telemetry.
-- **Status:** Queued.
-
-### Phase 11: Security and Testing
-- **Objective:** Comprehensive testing: visual regression across all 3 languages, RTL alignment audit, mobile viewport verification, SQL injection and XSS penetration checks, REST API rate-limiting validation.
-- **Key Artifacts:** Security audit report, browser verification logs.
-- **Status:** Queued.
-
-### Phase 12: Production Deployment
-- **Objective:** Production rollout on `https://sahandhaghi.site`: Nginx server block configuration, SSL/TLS certificate setup, database export/import, rewrite rule verification, and post-launch health monitoring.
-- **Key Artifacts:** Nginx configuration file, deployment checklist, disaster recovery guide.
-- **Status:** Queued.
+See `PROJECT_STATUS.md` for the evidence-based status snapshot and `docs/TECHNICAL_AUDIT_2026-11-11.md` for the audit scope, findings, and validation checklist.
