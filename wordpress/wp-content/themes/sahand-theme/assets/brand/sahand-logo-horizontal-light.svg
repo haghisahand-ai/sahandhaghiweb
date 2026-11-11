@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" width="320" height="64" fill="none">
+  <!-- SAHAND — Horizontal Lockup (Light Mode) -->
+  <g transform="translate(6, 4) scale(0.56)">
+    <polygon points="50,4 90,26 90,74 50,96 10,74 10,26" stroke="#0F172A" stroke-width="1.2" stroke-opacity="0.25" stroke-dasharray="3 3"/>
+    <polygon points="50,14 84,82 16,82" stroke="#0F172A" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="rgba(2, 132, 199, 0.12)"/>
+    <polyline points="50,14 68,44 84,82" stroke="#0F172A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.8"/>
+    <path d="M25 66 C38 61, 62 61, 75 66" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-opacity="0.75"/>
+    <path d="M33 50 C43 45, 57 45, 67 50" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85"/>
+    <path d="M41 34 C46 30, 54 30, 59 34" stroke="#0284C7" stroke-width="1.8" stroke-linecap="round" stroke-opacity="0.9"/>
+    <path d="M50 14 C36 32, 64 46, 50 64 C42 74, 56 80, 50 82" stroke="#0284C7" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="50" cy="14" r="3.8" fill="#0284C7"/>
+    <circle cx="16" cy="82" r="3" fill="#0284C7"/>
+    <circle cx="84" cy="82" r="3" fill="#0284C7"/>
+  </g>
+
+  <!-- Typographic Wordmark & Subtitle -->
+  <text x="76" y="34" font-family="'JetBrains Mono', 'Fira Code', monospace" font-size="22" font-weight="800" letter-spacing="3.5" fill="#0F172A">SAHAND</text>
+  <text x="78" y="49" font-family="'JetBrains Mono', 'Inter', monospace" font-size="8" font-weight="600" letter-spacing="1.5" fill="#475569">TECHNOLOGY &amp; SYSTEMS HUB</text>
+</svg>

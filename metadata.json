@@ -1,0 +1,6 @@
+{
+  "name": "SAHAND — Personal Technology Hub",
+  "description": "Personal technology hub, multilingual engineering platform, and product launchpad for Sahand Haghi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

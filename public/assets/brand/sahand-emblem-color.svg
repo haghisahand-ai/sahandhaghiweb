@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" fill="none">
+  <!-- SAHAND — Mount Sahand Geometric Vector Emblem (Color / Dark Mode) -->
+  <defs>
+    <linearGradient id="sahandRidgeGrad" x1="50" y1="14" x2="50" y2="82" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00F2FE"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="sahandBasaltFill" x1="50" y1="14" x2="50" y2="82" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#0369A1" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Structural Coordinate Grid (Geodetic Survey Hexagon) -->
+  <polygon points="50,4 90,26 90,74 50,96 10,74 10,26" stroke="#38BDF8" stroke-width="1.2" stroke-opacity="0.25" stroke-dasharray="3 3"/>
+
+  <!-- Primary Mount Sahand Massive Pyramid Facet (Kamal Summit) -->
+  <polygon points="50,14 84,82 16,82" stroke="#38BDF8" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="url(#sahandBasaltFill)"/>
+
+  <!-- Secondary Eastern Ridge (Ghoruq Peak Silhouette) -->
+  <polyline points="50,14 68,44 84,82" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.8"/>
+
+  <!-- Basalt Geological Strata Layer 1 (Base Magmatic Bedding) -->
+  <path d="M25 66 C38 61, 62 61, 75 66" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-opacity="0.75"/>
+
+  <!-- Basalt Geological Strata Layer 2 (Mid-Slope Elevation Contour) -->
+  <path d="M33 50 C43 45, 57 45, 67 50" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85"/>
+
+  <!-- Basalt Geological Strata Layer 3 (Upper Caldera Rim Contour) -->
+  <path d="M41 34 C46 30, 54 30, 59 34" stroke="#0284C7" stroke-width="1.8" stroke-linecap="round" stroke-opacity="0.9"/>
+
+  <!-- Distinctive S-Curve Central Ridge (Letter 'S' Flow Across Sahand Massif) -->
+  <path d="M50 14 C36 32, 64 46, 50 64 C42 74, 56 80, 50 82" stroke="url(#sahandRidgeGrad)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Summit Geodetic Coordinate Node (Apex Vertex) -->
+  <circle cx="50" cy="14" r="3.8" fill="#38BDF8"/>
+  <circle cx="50" cy="14" r="7" stroke="#38BDF8" stroke-width="1" stroke-opacity="0.4"/>
+
+  <!-- Base Coordinate Nodes -->
+  <circle cx="16" cy="82" r="3" fill="#38BDF8"/>
+  <circle cx="84" cy="82" r="3" fill="#38BDF8"/>
+</svg>

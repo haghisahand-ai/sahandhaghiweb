@@ -1,0 +1,41 @@
+/*
+Theme Name: SAHAND Theme
+Description: RTL styles for Persian (fa-IR) typography and bidirectional layouts
+*/
+
+body {
+  direction: rtl;
+  unicode-bidi: embed;
+  font-family: var(--font-persian);
+}
+
+/* Directional Icon Inversion */
+.icon-directional,
+.arrow-next {
+  transform: scaleX(-1);
+}
+
+/* Code blocks and monospace remain strictly LTR */
+pre, code, kbd, samp, var,
+.ltr-preserve,
+.code-block,
+.system-metrics {
+  direction: ltr !important;
+  text-align: left !important;
+  unicode-bidi: bidi-override;
+  font-family: var(--font-mono) !important;
+}
+
+/* Form alignments */
+input[type="text"],
+input[type="email"],
+input[type="url"],
+textarea {
+  text-align: right;
+}
+
+input[type="url"],
+input[type="email"].ltr-force {
+  direction: ltr;
+  text-align: left;
+}

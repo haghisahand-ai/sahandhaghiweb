@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" width="320" height="64" fill="none">
+  <!-- SAHAND — Persian Horizontal Lockup (Dark Mode) -->
+  <!-- Mount Sahand Emblem (64x64 scaled within bounding box) -->
+  <g transform="translate(6, 4) scale(0.56)">
+    <polygon points="50,4 90,26 90,74 50,96 10,74 10,26" stroke="#38BDF8" stroke-width="1.2" stroke-opacity="0.25" stroke-dasharray="3 3"/>
+    <polygon points="50,14 84,82 16,82" stroke="#38BDF8" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="rgba(56, 189, 248, 0.15)"/>
+    <polyline points="50,14 68,44 84,82" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.8"/>
+    <path d="M25 66 C38 61, 62 61, 75 66" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-opacity="0.75"/>
+    <path d="M33 50 C43 45, 57 45, 67 50" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-opacity="0.85"/>
+    <path d="M41 34 C46 30, 54 30, 59 34" stroke="#0284C7" stroke-width="1.8" stroke-linecap="round" stroke-opacity="0.9"/>
+    <path d="M50 14 C36 32, 64 46, 50 64 C42 74, 56 80, 50 82" stroke="#00F2FE" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="50" cy="14" r="3.8" fill="#38BDF8"/>
+    <circle cx="16" cy="82" r="3" fill="#38BDF8"/>
+    <circle cx="84" cy="82" r="3" fill="#38BDF8"/>
+  </g>
+
+  <!-- Persian Wordmark 'سهند' & English badge -->
+  <text x="76" y="34" font-family="'Vazirmatn', sans-serif" font-size="24" font-weight="800" fill="#FFFFFF">سهند</text>
+  <rect x="142" y="19" width="58" height="17" rx="4" fill="rgba(56, 189, 248, 0.15)" stroke="rgba(56, 189, 248, 0.4)" stroke-width="0.8"/>
+  <text x="149" y="31" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700" letter-spacing="1.2" fill="#38BDF8">SAHAND</text>
+  <text x="78" y="49" font-family="'Vazirmatn', sans-serif" font-size="9" font-weight="500" fill="#94A3B8">پلتفرم فناوری و سامانه‌های مهندسی</text>
+</svg>

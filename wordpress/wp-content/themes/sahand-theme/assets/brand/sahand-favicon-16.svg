@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none">
+  <!-- SAHAND — Micro-Optimized 16x16 Favicon (Razor Sharp Pixel-Grid Alignment) -->
+  <rect width="16" height="16" rx="3.5" fill="#070B14"/>
+  <!-- Bold Pyramid Peak -->
+  <polygon points="8,2.2 14,13.5 2,13.5" stroke="#38BDF8" stroke-width="1.3" stroke-linejoin="round" fill="rgba(2, 132, 199, 0.25)"/>
+  <!-- Bold S-Curve Ridge Line -->
+  <path d="M8 2.5 C6.2 5.5, 9.8 7.5, 8 10.5 C7.2 12, 8.5 13.5 8 13.5" stroke="#00F2FE" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- Basalt Geological Bedding Line -->
+  <path d="M4 11 C6.5 10.2, 9.5 10.2, 12 11" stroke="#38BDF8" stroke-width="1" stroke-linecap="round" stroke-opacity="0.8"/>
+  <!-- Summit Geodetic Node -->
+  <circle cx="8" cy="2.2" r="1.1" fill="#FFFFFF"/>
+</svg>

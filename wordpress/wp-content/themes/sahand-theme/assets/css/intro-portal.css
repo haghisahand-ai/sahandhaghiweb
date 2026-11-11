@@ -1,0 +1,308 @@
+/* ==========================================================================
+   SAHAND CINEMATIC INTRO PORTAL STYLESHEET
+   ========================================================================== */
+
+.sahand-intro-container {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background-color: #070B14;
+  color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.intro-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Header */
+.intro-header {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 2.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(7, 11, 20, 0.6);
+  backdrop-filter: blur(12px);
+}
+
+.intro-brand-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.intro-monogram {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 6px;
+  background: rgba(2, 132, 199, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38BDF8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  box-shadow: 0 0 15px rgba(2, 132, 199, 0.25);
+}
+
+.intro-meta-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.intro-title {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.875rem;
+  letter-spacing: 0.2em;
+}
+
+.intro-version {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.1em;
+}
+
+.intro-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.intro-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: rgba(56, 189, 248, 0.9);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34D399;
+  box-shadow: 0 0 8px #34D399;
+}
+
+.intro-btn-sm {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.intro-btn-sm:hover {
+  color: #FFFFFF;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Core Hero */
+.intro-core {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  max-width: 960px;
+  margin: auto;
+  text-align: center;
+}
+
+.intro-emblem {
+  position: relative;
+  width: 5.5rem;
+  height: 5.5rem;
+  margin-bottom: 2rem;
+}
+
+.emblem-glow {
+  position: absolute;
+  inset: -10px;
+  background: radial-gradient(circle, rgba(2, 132, 199, 0.3) 0%, transparent 70%);
+  filter: blur(14px);
+}
+
+.emblem-svg {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #131D33 0%, #0A1122 100%);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 16px;
+  padding: 0.85rem;
+  color: #38BDF8;
+  box-shadow: 0 0 25px rgba(2, 132, 199, 0.25);
+}
+
+.intro-brand-name {
+  font-family: var(--font-mono);
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  margin-bottom: 0.75rem;
+  text-shadow: 0 0 30px rgba(255, 255, 255, 0.15);
+}
+
+.intro-headline {
+  font-size: clamp(1.25rem, 2.8vw, 1.75rem);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.95);
+  max-width: 720px;
+  line-height: 1.4;
+  margin-bottom: 1.25rem;
+}
+
+.intro-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  font-size: 0.8125rem;
+  color: #38BDF8;
+  margin-bottom: 2.75rem;
+}
+
+.intro-pills .divider {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* Language Selection Grid */
+.intro-lang-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  width: 100%;
+}
+
+.lang-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 1.35rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  text-decoration: none;
+  transition: all 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  backdrop-filter: blur(8px);
+}
+
+.lang-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(56, 189, 248, 0.6);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(2, 132, 199, 0.25);
+}
+
+.lang-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.lang-native-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+.lang-tag {
+  font-size: 0.6875rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+  background: rgba(2, 132, 199, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38BDF8;
+}
+
+.lang-desc {
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
+}
+
+.lang-cta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #38BDF8;
+}
+
+/* Footer */
+.intro-footer {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 2.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(7, 11, 20, 0.6);
+  backdrop-filter: blur(12px);
+  font-size: 0.6875rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.intro-footer .sep {
+  margin-inline: 0.65rem;
+  color: rgba(255, 255, 255, 0.15);
+}
+
+.security-lock {
+  color: #34D399;
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 768px) {
+  .intro-header {
+    padding: 1rem 1.25rem;
+  }
+  .intro-badge {
+    display: none;
+  }
+  .intro-lang-grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+  .intro-footer {
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    text-align: center;
+  }
+}
