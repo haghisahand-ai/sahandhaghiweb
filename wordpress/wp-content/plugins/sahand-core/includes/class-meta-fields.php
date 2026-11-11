@@ -13,12 +13,11 @@ class Sahand_Meta_Fields {
 
     public static function init() {
         add_action('add_meta_boxes', array(__CLASS__, 'add_meta_boxes'));
-        add_action('save_post', array(__CLASS__, 'save_project_meta'));
-        add_action('save_post', array(__CLASS__, 'save_product_meta'));
+        add_action('save_post_sahand_project', array(__CLASS__, 'save_project_meta'), 10, 1);
+        add_action('save_post_sahand_product', array(__CLASS__, 'save_product_meta'), 10, 1);
     }
 
     public static function add_meta_boxes() {
-        // Project Specifications Meta Box
         add_meta_box(
             'sahand_project_specs',
             __('Project Engineering Specifications', 'sahand-core'),
@@ -28,7 +27,6 @@ class Sahand_Meta_Fields {
             'high'
         );
 
-        // Product Release Specifications Meta Box
         add_meta_box(
             'sahand_product_specs',
             __('Launchpad Release Specifications', 'sahand-core'),
@@ -124,11 +122,11 @@ class Sahand_Meta_Fields {
     }
 
     public static function save_project_meta($post_id) {
-        if (!Sahand_Security::verify_authorized_action('sahand_project_nonce', 'sahand_save_project_specs', 'edit_post')) {
+        if ('sahand_project' !== get_post_type($post_id) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
             return;
         }
 
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+        if (!Sahand_Security::verify_authorized_action('sahand_project_nonce', 'sahand_save_project_specs', 'edit_post', $post_id)) {
             return;
         }
 
@@ -162,17 +160,19 @@ class Sahand_Meta_Fields {
     }
 
     public static function save_product_meta($post_id) {
-        if (!Sahand_Security::verify_authorized_action('sahand_product_nonce', 'sahand_save_product_specs', 'edit_post')) {
+        if ('sahand_product' !== get_post_type($post_id) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
             return;
         }
 
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+        if (!Sahand_Security::verify_authorized_action('sahand_product_nonce', 'sahand_save_product_specs', 'edit_post', $post_id)) {
             return;
         }
 
         if (isset($_POST['sahand_product_version'])) {
             $version = Sahand_Security::sanitize_semver(wp_unslash($_POST['sahand_product_version']));
-            update_post_meta($post_id, '_sahand_product_version', $version);
+            if (preg_match('/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/', $version)) {
+                update_post_meta($post_id, '_sahand_product_version', $version);
+            }
         }
 
         if (isset($_POST['sahand_product_status'])) {
