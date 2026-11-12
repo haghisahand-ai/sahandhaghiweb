@@ -9,12 +9,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// 1. Root Language & Intro Routing:
-// If visitor accesses bare root domain with no language cookie, present the approved cinematic intro portal
-$has_lang_cookie = isset($_COOKIE['pll_language']) && in_array($_COOKIE['pll_language'], array('fa', 'en', 'tr'), true);
-$is_root_without_cookie = is_front_page() && !$has_lang_cookie && !isset($_GET['lang']);
-
-if ($is_root_without_cookie) {
+// 1. Show the intro portal only at the bare site root.
+// Language-prefixed front pages must render the actual localized homepage,
+// even when the visitor has no Polylang cookie.
+if (function_exists('sahand_is_root_intro_request') && sahand_is_root_intro_request()) {
     get_header();
     get_template_part('template-parts/intro/intro-portal');
     get_footer();
