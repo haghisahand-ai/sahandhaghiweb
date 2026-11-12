@@ -3,7 +3,7 @@ name: SAHAND CI
 on:
   push:
     branches:
-      - audit-fixes
+      - '**'
   pull_request:
     branches:
       - main
