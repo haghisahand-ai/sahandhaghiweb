@@ -111,6 +111,7 @@ class Sahand_REST_API {
                     'required'          => true,
                     'type'              => 'string',
                     'format'            => 'email',
+                    'maxLength'         => 254,
                     'sanitize_callback' => 'sanitize_email',
                 ),
                 'message' => array(
@@ -148,6 +149,13 @@ class Sahand_REST_API {
             'order'          => 'DESC',
         );
 
+        // Polylang supports the "lang" WP_Query argument. Apply it only
+        // when the multilingual plugin is active.
+        $language = $request->get_param('lang');
+        if (function_exists('pll_languages_list') && in_array($language, array('fa', 'en', 'tr'), true)) {
+            $query_args['lang'] = $language;
+        }
+
         $query = new WP_Query($query_args);
         $projects = array();
 
@@ -179,8 +187,16 @@ class Sahand_REST_API {
         // Require a same-site browser Origin and use a honeypot plus rate limits.
         $origin = $request->get_header('origin');
         $origin_host = is_string($origin) ? wp_parse_url($origin, PHP_URL_HOST) : '';
+        $origin_scheme = is_string($origin) ? wp_parse_url($origin, PHP_URL_SCHEME) : '';
         $site_host = wp_parse_url(home_url('/'), PHP_URL_HOST);
-        if (!$origin_host || !$site_host || strtolower($origin_host) !== strtolower($site_host)) {
+        $site_scheme = wp_parse_url(home_url('/'), PHP_URL_SCHEME);
+        if (
+            !$origin_host ||
+            !$site_host ||
+            strtolower($origin_host) !== strtolower($site_host) ||
+            !$origin_scheme ||
+            strtolower($origin_scheme) !== strtolower((string) $site_scheme)
+        ) {
             return new WP_REST_Response(array(
                 'success' => false,
                 'message' => 'Request origin is not allowed.',
