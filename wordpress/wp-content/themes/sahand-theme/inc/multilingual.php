@@ -10,25 +10,59 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Returns current language code ('fa', 'en', 'tr') with safe fallback
+ * Returns current language code ('fa', 'en', 'tr') with safe fallback.
  */
 function sahand_get_current_lang() {
     if (function_exists('pll_current_language')) {
-        return pll_current_language('slug') ?: 'fa';
+        $language = pll_current_language('slug');
+        if (in_array($language, array('fa', 'en', 'tr'), true)) {
+            return $language;
+        }
     }
+
     return 'fa';
 }
 
 /**
- * Renders the accessible trilingual switcher component
+ * Determines whether the current request is the unlocalized site root.
+ *
+ * The intro portal belongs only on the bare WordPress front-page URL.
+ * A language-prefixed front page (for example /en/) must never be mistaken
+ * for the root portal, even when the Polylang cookie is absent or stale.
+ */
+function sahand_is_root_intro_request() {
+    if (!is_front_page() || is_admin() || isset($_GET['lang'])) {
+        return false;
+    }
+
+    $home_path = wp_parse_url(home_url('/'), PHP_URL_PATH);
+    $request_path = isset($_SERVER['REQUEST_URI'])
+        ? wp_parse_url(wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_PATH)
+        : '';
+
+    if (!is_string($home_path) || !is_string($request_path)) {
+        return false;
+    }
+
+    $normalize_path = static function ($path) {
+        $path = '/' . ltrim($path, '/');
+        $path = untrailingslashit($path);
+        return '' === $path ? '/' : $path;
+    };
+
+    return $normalize_path($request_path) === $normalize_path($home_path);
+}
+
+/**
+ * Renders the accessible trilingual switcher component.
  */
 function sahand_render_language_switcher() {
     $current_lang = sahand_get_current_lang();
 
     $languages = array(
-        'fa' => array('slug' => 'fa', 'label' => 'فا', 'name' => 'فارسی', 'dir' => 'rtl'),
-        'en' => array('slug' => 'en', 'label' => 'EN', 'name' => 'English', 'dir' => 'ltr'),
-        'tr' => array('slug' => 'tr', 'label' => 'TR', 'name' => 'Türkçe', 'dir' => 'ltr'),
+        'fa' => array('label' => 'فا', 'name' => 'فارسی'),
+        'en' => array('label' => 'EN', 'name' => 'English'),
+        'tr' => array('label' => 'TR', 'name' => 'Türkçe'),
     );
 
     echo '<div class="lang-switcher" role="navigation" aria-label="' . esc_attr__('Language Switcher', 'sahand-theme') . '">';
@@ -38,7 +72,6 @@ function sahand_render_language_switcher() {
         $active_class = $is_current ? ' current-lang' : '';
         $aria_current = $is_current ? ' aria-current="true"' : '';
 
-        // Get translated URL if Polylang is active, or build canonical route
         $target_url = home_url('/' . $code . '/');
         if (function_exists('pll_the_languages')) {
             $translations = pll_the_languages(array('raw' => 1));
@@ -56,10 +89,9 @@ function sahand_render_language_switcher() {
 }
 
 /**
- * Injects canonical hreflang tags into <head> for trilingual SEO
+ * Inject hreflang tags for pages with real translations.
  */
 function sahand_output_hreflang_tags() {
-    // Avoid duplicates on CPT pages managed by sahand-core SEO engine
     if (is_singular(array('sahand_project', 'sahand_product', 'sahand_ai_tool', 'sahand_insight'))) {
         return;
     }
@@ -68,11 +100,18 @@ function sahand_output_hreflang_tags() {
         return;
     }
 
-    $langs = array('fa', 'en', 'tr');
-    foreach ($langs as $lang) {
-        $url = home_url('/' . $lang . '/');
-        echo '<link rel="alternate" hreflang="' . esc_attr($lang) . '" href="' . esc_url($url) . '" />' . "\n";
+    if (function_exists('pll_the_languages')) {
+        $translations = pll_the_languages(array('raw' => 1));
+        if (is_array($translations)) {
+            foreach ($translations as $language) {
+                if (!empty($language['slug']) && !empty($language['url'])) {
+                    echo '<link rel="alternate" hreflang="' . esc_attr($language['slug']) . '" href="' . esc_url($language['url']) . '" />' . "\n";
+                }
+            }
+            return;
+        }
     }
-    echo '<link rel="alternate" hreflang="x-default" href="' . esc_url(home_url('/fa/')) . '" />' . "\n";
+
+    // Without a multilingual plugin, do not publish fictitious language alternates.
 }
 add_action('wp_head', 'sahand_output_hreflang_tags', 2);
