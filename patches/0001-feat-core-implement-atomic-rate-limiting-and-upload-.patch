@@ -1,0 +1,393 @@
+From 42ee23dbac8c12915eddd11ab82cf8946a050522 Mon Sep 17 00:00:00 2001
+From: Sahand Haghi & Engineering Team <haghisahnd@gmail.com>
+Date: Wed, 11 Nov 2026 21:01:04 +0000
+Subject: [PATCH 1/5] feat(core): implement atomic rate limiting and upload
+ directory security
+
+---
+ .../includes/class-rate-limiter.php           | 185 ++++++++++++++++++
+ .../includes/class-sahand-core.php            |  11 ++
+ .../sahand-core/includes/class-security.php   |  88 +++++++--
+ .../plugins/sahand-core/sahand-core.php       |   2 +
+ 4 files changed, 266 insertions(+), 20 deletions(-)
+ create mode 100644 wordpress/wp-content/plugins/sahand-core/includes/class-rate-limiter.php
+
+diff --git a/wordpress/wp-content/plugins/sahand-core/includes/class-rate-limiter.php b/wordpress/wp-content/plugins/sahand-core/includes/class-rate-limiter.php
+new file mode 100644
+index 0000000..f80a414
+--- /dev/null
++++ b/wordpress/wp-content/plugins/sahand-core/includes/class-rate-limiter.php
+@@ -0,0 +1,185 @@
++<?php
++/**
++ * Atomic & Proxy-Safe Rate Limiter for Shared Hosting & WAF Integration
++ *
++ * @package SahandCore
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++class Sahand_Rate_Limiter {
++
++    /**
++     * Table name without prefix
++     */
++    const TABLE_NAME = 'sahand_rate_limits';
++
++    /**
++     * Cache group for object caching
++     */
++    const CACHE_GROUP = 'sahand_rate_limits';
++
++    /**
++     * Create the rate limits table if it does not already exist
++     */
++    public static function create_table() {
++        global $wpdb;
++        $table_name = $wpdb->prefix . self::TABLE_NAME;
++        $charset_collate = $wpdb->get_charset_collate();
++
++        $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (
++            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
++            action_key varchar(40) NOT NULL,
++            ip_hash varchar(64) NOT NULL,
++            bucket bigint(20) unsigned NOT NULL,
++            hits int(11) unsigned NOT NULL DEFAULT 1,
++            expires_at bigint(20) unsigned NOT NULL,
++            PRIMARY KEY (id),
++            UNIQUE KEY action_ip_bucket (action_key, ip_hash, bucket),
++            KEY idx_expires (expires_at)
++        ) {$charset_collate};";
++
++        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
++        dbDelta($sql);
++    }
++
++    /**
++     * Clean up expired rate limiting entries
++     */
++    public static function cleanup_expired() {
++        global $wpdb;
++        $table_name = $wpdb->prefix . self::TABLE_NAME;
++        $now = time();
++        // Delete expired records (run via wp_scheduled or probabilistic sweep)
++        $wpdb->query($wpdb->prepare("DELETE FROM {$table_name} WHERE expires_at < %d", $now));
++    }
++
++    /**
++     * Resolve the client IP address safely without trusting unverified forwarding headers
++     *
++     * @return string
++     */
++    public static function get_client_ip() {
++        $remote_addr = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1';
++
++        // Check if trusted reverse proxy configuration is defined in wp-config.php
++        $trusted_proxies = defined('SAHAND_TRUSTED_PROXIES') && is_array(SAHAND_TRUSTED_PROXIES) 
++            ? SAHAND_TRUSTED_PROXIES 
++            : array('127.0.0.1', '::1');
++
++        $is_behind_trusted_proxy = in_array($remote_addr, $trusted_proxies, true);
++
++        // If behind a trusted Cloudflare proxy and CF-Connecting-IP is set
++        if ($is_behind_trusted_proxy && !empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
++            $cf_ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP']));
++            if (filter_var($cf_ip, FILTER_VALIDATE_IP)) {
++                return $cf_ip;
++            }
++        }
++
++        // If behind a verified trusted reverse proxy and X-Forwarded-For is set, take the leftmost valid public IP
++        if ($is_behind_trusted_proxy && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
++            $forwarded = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
++            $ip_list = explode(',', $forwarded);
++            foreach ($ip_list as $raw_ip) {
++                $trimmed = trim($raw_ip);
++                if (filter_var($trimmed, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
++                    return $trimmed;
++                }
++            }
++        }
++
++        // Default to REMOTE_ADDR
++        return filter_var($remote_addr, FILTER_VALIDATE_IP) ? $remote_addr : '127.0.0.1';
++    }
++
++    /**
++     * Atomically check and increment rate limit for a given action and client
++     *
++     * @param string $action_key Category or action identifier (e.g. 'contact_form', 'ai_gateway')
++     * @param int    $max_requests Maximum requests allowed in the window
++     * @param int    $window_seconds Duration of the sliding window in seconds
++     * @return array Array containing:
++     *               'allowed'       => bool,
++     *               'current'       => int,
++     *               'max'           => int,
++     *               'retry_after'   => int (seconds remaining until reset),
++     *               'reset_at'      => int (timestamp)
++     */
++    public static function check_and_increment($action_key, $max_requests = 5, $window_seconds = 600) {
++        global $wpdb;
++
++        $client_ip = self::get_client_ip();
++        // Hash IP with secret salt for GDPR compliance and privacy
++        $salt = defined('AUTH_SALT') ? AUTH_SALT : 'sahand_fallback_salt_2026';
++        $ip_hash = hash('sha256', $client_ip . '|' . $salt);
++
++        $now = time();
++        $bucket = (int) floor($now / max(1, $window_seconds));
++        $expires_at = ($bucket + 1) * $window_seconds;
++        $retry_after = max(1, $expires_at - $now);
++
++        $table_name = $wpdb->prefix . self::TABLE_NAME;
++
++        // Probabilistic garbage collection (1 in 100 requests)
++        if (mt_rand(1, 100) === 42) {
++            self::cleanup_expired();
++        }
++
++        // 1. Try atomic MySQL INSERT ... ON DUPLICATE KEY UPDATE
++        // This eliminates race conditions on shared MySQL databases
++        $query = $wpdb->prepare(
++            "INSERT INTO {$table_name} (action_key, ip_hash, bucket, hits, expires_at)
++             VALUES (%s, %s, %d, 1, %d)
++             ON DUPLICATE KEY UPDATE hits = hits + 1",
++            $action_key,
++            $ip_hash,
++            $bucket,
++            $expires_at
++        );
++
++        $suppress = $wpdb->suppress_errors(true);
++        $result = $wpdb->query($query);
++        $wpdb->suppress_errors($suppress);
++
++        if (false !== $result) {
++            // Retrieve current hits for this bucket
++            $current_hits = (int) $wpdb->get_var($wpdb->prepare(
++                "SELECT hits FROM {$table_name} WHERE action_key = %s AND ip_hash = %s AND bucket = %d",
++                $action_key,
++                $ip_hash,
++                $bucket
++            ));
++
++            $allowed = ($current_hits <= (int) $max_requests);
++
++            return array(
++                'allowed'     => $allowed,
++                'current'     => $current_hits,
++                'max'         => (int) $max_requests,
++                'retry_after' => $allowed ? 0 : $retry_after,
++                'reset_at'    => $expires_at,
++                'storage'     => 'mysql_atomic',
++            );
++        }
++
++        // 2. Fallback to Transient storage if table is not yet provisioned
++        $transient_key = 'sh_rt_' . substr(hash('sha256', "{$action_key}:{$ip_hash}:{$bucket}"), 0, 32);
++        $current_hits = (int) get_transient($transient_key);
++        $new_hits = $current_hits + 1;
++        set_transient($transient_key, $new_hits, $retry_after);
++
++        $allowed = ($new_hits <= (int) $max_requests);
++
++        return array(
++            'allowed'     => $allowed,
++            'current'     => $new_hits,
++            'max'         => (int) $max_requests,
++            'retry_after' => $allowed ? 0 : $retry_after,
++            'reset_at'    => $expires_at,
++            'storage'     => 'transient_fallback',
++        );
++    }
++}
+diff --git a/wordpress/wp-content/plugins/sahand-core/includes/class-sahand-core.php b/wordpress/wp-content/plugins/sahand-core/includes/class-sahand-core.php
+index e08e841..f3e6bdc 100644
+--- a/wordpress/wp-content/plugins/sahand-core/includes/class-sahand-core.php
++++ b/wordpress/wp-content/plugins/sahand-core/includes/class-sahand-core.php
+@@ -25,6 +25,11 @@ class Sahand_Core {
+     }
+ 
+     public static function activate() {
++        // Create atomic rate limits table if needed
++        if (class_exists('Sahand_Rate_Limiter')) {
++            Sahand_Rate_Limiter::create_table();
++        }
++
+         // Register post types and taxonomies upon activation to flush rewrite rules
+         Sahand_Post_Types::register_all();
+         Sahand_Taxonomies::register_all();
+@@ -36,6 +41,9 @@ class Sahand_Core {
+     }
+ 
+     public function run() {
++        // Initialize Security Hardening
++        Sahand_Security::init();
++
+         // Hook Post Types and Taxonomies to 'init'
+         add_action('init', array('Sahand_Post_Types', 'register_all'));
+         add_action('init', array('Sahand_Taxonomies', 'register_all'));
+@@ -46,6 +54,9 @@ class Sahand_Core {
+         // Hook Multilingual SEO Manager & Dynamic Meta Tags
+         Sahand_SEO_Manager::init();
+ 
++        // Hook AI Gateway
++        Sahand_AI_Gateway::init();
++
+         // Hook REST API
+         Sahand_REST_API::init();
+ 
+diff --git a/wordpress/wp-content/plugins/sahand-core/includes/class-security.php b/wordpress/wp-content/plugins/sahand-core/includes/class-security.php
+index 07ee4ea..1a32cc9 100644
+--- a/wordpress/wp-content/plugins/sahand-core/includes/class-security.php
++++ b/wordpress/wp-content/plugins/sahand-core/includes/class-security.php
+@@ -1,6 +1,6 @@
+ <?php
+ /**
+- * Central Security Engine for SAHAND Core
++ * Core Security, Authorization & Hardening
+  *
+  * @package SahandCore
+  */
+@@ -11,15 +11,29 @@ if (!defined('ABSPATH')) {
+ 
+ class Sahand_Security {
+ 
++    /**
++     * Initialize security hooks
++     */
++    public static function init() {
++        // Enforce upload directory execution restrictions
++        add_action('admin_init', array(__CLASS__, 'protect_upload_directory'));
++        
++        // Disable XML-RPC for DDoS mitigation
++        add_filter('xmlrpc_enabled', '__return_false');
++        
++        // Remove WordPress version disclosure
++        add_filter('the_generator', '__return_empty_string');
++    }
++
+     /**
+      * Verify a nonce and the caller's capability for the target object.
+      *
+      * For object-level capabilities such as edit_post, pass the object ID.
+      *
+-     * @param string $nonce_name
+-     * @param string $action
+-     * @param string $capability
+-     * @param int    $object_id
++     * @param string $nonce_name  Field name containing the nonce
++     * @param string $action      Nonce action name
++     * @param string $capability  Required capability (default 'edit_posts')
++     * @param int    $object_id   Target post/object ID for object-level checks
+      * @return bool
+      */
+     public static function verify_authorized_action($nonce_name, $action, $capability = 'edit_posts', $object_id = 0) {
+@@ -49,30 +63,42 @@ class Sahand_Security {
+     }
+ 
+     /**
+-     * Ephemeral IP rate limiter using WordPress transients.
+-     *
+-     * Note: transient read/increment/write is not atomic under concurrent
+-     * requests. Use an atomic store or edge/WAF rate limiting for strict
+-     * production enforcement.
++     * Check rate limit using the atomic Sahand_Rate_Limiter
+      *
+-     * @param string $action_key Unique identifier for action.
+-     * @param int    $max_requests Maximum allowed requests in window.
+-     * @param int    $window_seconds Window duration in seconds.
+-     * @return bool True if allowed, false if limit exceeded.
++     * @param string $action_key Category or action identifier
++     * @param int    $max_requests Maximum allowed requests
++     * @param int    $window_seconds Duration of window
++     * @return array Result array from rate limiter
+      */
+     public static function check_rate_limit($action_key, $max_requests = 5, $window_seconds = 600) {
+-        $ip_address = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown';
+-        $ip_hash = hash('sha256', $ip_address . wp_salt('auth'));
+-        $transient_key = 'sahand_rate_' . substr(hash('sha256', $action_key . $ip_hash), 0, 32);
++        if (class_exists('Sahand_Rate_Limiter')) {
++            return Sahand_Rate_Limiter::check_and_increment($action_key, $max_requests, $window_seconds);
++        }
+ 
+-        $current_hits = (int) get_transient($transient_key);
++        // Fallback transient implementation if class not loaded
++        $client_ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '127.0.0.1';
++        $ip_hash = hash('sha256', $client_ip . wp_salt('auth'));
++        $transient_key = 'sh_rate_' . substr(hash('sha256', $action_key . $ip_hash), 0, 32);
+ 
++        $current_hits = (int) get_transient($transient_key);
+         if ($current_hits >= absint($max_requests)) {
+-            return false;
++            return array(
++                'allowed'     => false,
++                'current'     => $current_hits,
++                'max'         => absint($max_requests),
++                'retry_after' => absint($window_seconds),
++                'storage'     => 'transient_fallback',
++            );
+         }
+ 
+         set_transient($transient_key, $current_hits + 1, absint($window_seconds));
+-        return true;
++        return array(
++            'allowed'     => true,
++            'current'     => $current_hits + 1,
++            'max'         => absint($max_requests),
++            'retry_after' => 0,
++            'storage'     => 'transient_fallback',
++        );
+     }
+ 
+     /**
+@@ -99,4 +125,26 @@ class Sahand_Security {
+ 
+         return wp_json_encode($decoded);
+     }
++
++    /**
++     * Prevent direct execution of PHP scripts in the WordPress uploads directory
++     */
++    public static function protect_upload_directory() {
++        $upload_dir = wp_upload_dir();
++        $basedir = $upload_dir['basedir'];
++
++        if (!is_dir($basedir) || !is_writable($basedir)) {
++            return;
++        }
++
++        $htaccess_file = trailingslashit($basedir) . '.htaccess';
++        if (!file_exists($htaccess_file)) {
++            $rules = "# SAHAND Security: Disable PHP execution in uploads\n"
++                   . "<Files *.php>\n"
++                   . "deny from all\n"
++                   . "</Files>\n"
++                   . "Options -Indexes -ExecCGI\n";
++            @file_put_contents($htaccess_file, $rules);
++        }
++    }
+ }
+diff --git a/wordpress/wp-content/plugins/sahand-core/sahand-core.php b/wordpress/wp-content/plugins/sahand-core/sahand-core.php
+index 1e336bd..9886e2e 100644
+--- a/wordpress/wp-content/plugins/sahand-core/sahand-core.php
++++ b/wordpress/wp-content/plugins/sahand-core/sahand-core.php
+@@ -25,11 +25,13 @@ define('SAHAND_CORE_URI', plugin_dir_url(__FILE__));
+ define('SAHAND_CORE_FILE', __FILE__);
+ 
+ // Include Central Orchestrator
++require_once SAHAND_CORE_DIR . 'includes/class-rate-limiter.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-security.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-post-types.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-taxonomies.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-meta-fields.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-seo.php';
++require_once SAHAND_CORE_DIR . 'includes/class-ai-gateway.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-rest-api.php';
+ require_once SAHAND_CORE_DIR . 'includes/class-sahand-core.php';
+ 
+-- 
+2.34.1
+

@@ -25,11 +25,13 @@ define('SAHAND_CORE_URI', plugin_dir_url(__FILE__));
 define('SAHAND_CORE_FILE', __FILE__);
 
 // Include Central Orchestrator
+require_once SAHAND_CORE_DIR . 'includes/class-rate-limiter.php';
 require_once SAHAND_CORE_DIR . 'includes/class-security.php';
 require_once SAHAND_CORE_DIR . 'includes/class-post-types.php';
 require_once SAHAND_CORE_DIR . 'includes/class-taxonomies.php';
 require_once SAHAND_CORE_DIR . 'includes/class-meta-fields.php';
 require_once SAHAND_CORE_DIR . 'includes/class-seo.php';
+require_once SAHAND_CORE_DIR . 'includes/class-ai-gateway.php';
 require_once SAHAND_CORE_DIR . 'includes/class-rest-api.php';
 require_once SAHAND_CORE_DIR . 'includes/class-sahand-core.php';
 

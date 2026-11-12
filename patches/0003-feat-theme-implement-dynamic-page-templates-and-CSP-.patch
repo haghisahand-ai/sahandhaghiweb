@@ -1,0 +1,1278 @@
+From 170c8df524eed1bb83f7356e49d21e6d60aad33f Mon Sep 17 00:00:00 2001
+From: Sahand Haghi & Engineering Team <haghisahnd@gmail.com>
+Date: Wed, 11 Nov 2026 21:01:15 +0000
+Subject: [PATCH 3/5] feat(theme): implement dynamic page templates and CSP
+ security headers
+
+---
+ .../themes/sahand-theme/inc/security.php      |  43 +++-
+ .../themes/sahand-theme/page-about.php        | 102 +++++++++
+ .../themes/sahand-theme/page-ai-lab.php       | 189 +++++++++++++++++
+ .../themes/sahand-theme/page-contact.php      | 200 ++++++++++++++++++
+ .../themes/sahand-theme/page-engineering.php  |  99 +++++++++
+ .../themes/sahand-theme/page-insights.php     | 122 +++++++++++
+ .../themes/sahand-theme/page-launchpad.php    | 123 +++++++++++
+ .../themes/sahand-theme/page-projects.php     | 135 ++++++++++++
+ .../sahand-theme/single-sahand_project.php    | 104 +++++++++
+ .../wp-content/themes/sahand-theme/single.php |  42 ++++
+ .../components/neural-data-flow.php           |   2 +-
+ 11 files changed, 1153 insertions(+), 8 deletions(-)
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-about.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-ai-lab.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-contact.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-engineering.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-insights.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-launchpad.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/page-projects.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/single-sahand_project.php
+ create mode 100644 wordpress/wp-content/themes/sahand-theme/single.php
+
+diff --git a/wordpress/wp-content/themes/sahand-theme/inc/security.php b/wordpress/wp-content/themes/sahand-theme/inc/security.php
+index 953c587..99d2e5d 100644
+--- a/wordpress/wp-content/themes/sahand-theme/inc/security.php
++++ b/wordpress/wp-content/themes/sahand-theme/inc/security.php
+@@ -1,6 +1,6 @@
+ <?php
+ /**
+- * Hardening & Security Filters
++ * Hardening & Security Filters for SAHAND Theme
+  *
+  * @package SahandTheme
+  */
+@@ -10,15 +10,44 @@ if (!defined('ABSPATH')) {
+ }
+ 
+ /**
+- * Send Defense-in-Depth HTTP Security Headers
++ * Send Defense-in-Depth HTTP Security Headers & Content Security Policy
+  */
+ function sahand_send_security_headers() {
+-    if (!headers_sent()) {
+-        header('X-Content-Type-Options: nosniff');
+-        header('X-Frame-Options: SAMEORIGIN');
+-        header('Referrer-Policy: strict-origin-when-cross-origin');
+-        header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
++    if (headers_sent() || is_admin()) {
++        return;
+     }
++
++    // Baseline Security Headers
++    header('X-Content-Type-Options: nosniff');
++    header('X-Frame-Options: SAMEORIGIN');
++    header('Referrer-Policy: strict-origin-when-cross-origin');
++    header('Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()');
++
++    // Strict-Transport-Security when HTTPS is active
++    if (is_ssl()) {
++        header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
++    }
++
++    // Content Security Policy (CSP)
++    // Starting with Report-Only to avoid breaking third-party scripts or WordPress customizations
++    // Filter 'sahand_enforce_csp' can be hooked to return true when ready for strict enforcement
++    $enforce_csp = apply_filters('sahand_enforce_csp', false);
++    $csp_header_name = $enforce_csp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only';
++
++    $csp_directives = array(
++        "default-src 'self'",
++        "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com", // 'unsafe-inline' required for WP inline scripts & portal canvas
++        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
++        "font-src 'self' data: https://fonts.gstatic.com",
++        "img-src 'self' data: https: blob:",
++        "connect-src 'self' https://generativelanguage.googleapis.com",
++        "frame-ancestors 'self'",
++        "base-uri 'self'",
++        "form-action 'self'",
++    );
++
++    $csp_policy = implode('; ', $csp_directives);
++    header("{$csp_header_name}: {$csp_policy}");
+ }
+ add_action('send_headers', 'sahand_send_security_headers');
+ 
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-about.php b/wordpress/wp-content/themes/sahand-theme/page-about.php
+new file mode 100644
+index 0000000..4348f02
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-about.php
+@@ -0,0 +1,102 @@
++<?php
++/**
++ * Template Name: About Sahand Haghi & Philosophy
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem;">
++  <div class="sahand-container" style="max-width: 900px;">
++    
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++      <div class="badge badge-stable" style="margin-bottom: 1rem; display: inline-block;">
++        <span>IDENTITY // BUILDER · ARCHITECT · INDEPENDENT DEVELOPER</span>
++      </div>
++      <h1 style="font-size: clamp(2.25rem, 4.5vw, 3.25rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('سهند حقی — معمار نرم‌افزار، توسعه‌دهنده و پژوهشگر');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Sahand Haghi — Yazılım Mimarı, Geliştirici ve Araştırmacı');
++        } else {
++            echo esc_html('Sahand Haghi — Software Architect, Builder & Researcher');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.25rem; color: var(--color-text-secondary); margin-top: 1rem; line-height: 1.7; font-weight: 400;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('فراتر از فناوری. ساخت آنچه در راه است.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Teknolojinin Ötesinde. Geleceği İnşa Etmek.');
++        } else {
++            echo esc_html('Beyond Technology. Building What\'s Next.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <div style="font-size: 1.125rem; line-height: 1.8; color: var(--color-text-secondary); display: flex; flex-direction: column; gap: 2rem;">
++      
++      <p>
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('نام سهند برگرفته از قله سرفراز سهند در آذربایجان، نماد استواری، پایداری و بلندنظری مهندسی است. این پلتفرم فضایی برای توسعه و اشتراک‌گذاری سیستم‌های نرم‌افزاری پیچیده، موتورهای معاملاتی، ابزارهای هوش مصنوعی و محصولات دیجیتال مستقل است.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Sahand adı, Azerbaycan\'ın görkemli Sahand Dağı\'ndan ilham alarak kararlılık, dayanıklılık ve mühendislik vizyonunu simgeler. Bu platform; yüksek ölçeklenebilir yazılım mimarileri, yapay zeka sistemleri ve bağımsız dijital ürünler geliştirmeye adanmıştır.');
++        } else {
++            echo esc_html('Inspired by the geological permanence of Mount Sahand in Azerbaijan, the brand embodies resilience, architectural precision, and uncompromising engineering discipline. SAHAND is an independent personal technology hub dedicated to scalable distributed software, sovereign AI gateways, and deterministic algorithmic systems.');
++        }
++        ?>
++      </p>
++
++      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin-block: 1rem;">
++        <div class="sahand-card">
++          <div class="badge badge-tech font-mono" style="margin-bottom: 0.75rem;">FOCUS 01</div>
++          <h3 style="font-weight: 700; margin-bottom: 0.5rem;"><?php esc_html_e('Financial Markets & Order Flow', 'sahand-theme'); ?></h3>
++          <p style="font-size: 0.875rem; color: var(--color-text-secondary); margin: 0;">
++            <?php esc_html_e('MicroMap price action, London/New York session windows, and high-precision execution algorithms.', 'sahand-theme'); ?>
++          </p>
++        </div>
++
++        <div class="sahand-card">
++          <div class="badge badge-tech font-mono" style="margin-bottom: 0.75rem;">FOCUS 02</div>
++          <h3 style="font-weight: 700; margin-bottom: 0.5rem;"><?php esc_html_e('Decoupled Web Architecture', 'sahand-theme'); ?></h3>
++          <p style="font-size: 0.875rem; color: var(--color-text-secondary); margin: 0;">
++            <?php esc_html_e('Custom high-performance WordPress themes and plugins built for speed, defense-in-depth, and standard hosting compatibility.', 'sahand-theme'); ?>
++          </p>
++        </div>
++
++        <div class="sahand-card">
++          <div class="badge badge-tech font-mono" style="margin-bottom: 0.75rem;">FOCUS 03</div>
++          <h3 style="font-weight: 700; margin-bottom: 0.5rem;"><?php esc_html_e('Sovereign AI Systems', 'sahand-theme'); ?></h3>
++          <p style="font-size: 0.875rem; color: var(--color-text-secondary); margin: 0;">
++            <?php esc_html_e('Modular server-side gateways utilizing Gemini 3.8 and local model pipelines with zero client credential exposure.', 'sahand-theme'); ?>
++          </p>
++        </div>
++      </div>
++
++      <div style="padding: 1.5rem; background: rgba(2, 132, 199, 0.05); border: 1px solid rgba(2, 132, 199, 0.2); border-radius: var(--radius-md);">
++        <h3 style="font-size: 1.125rem; font-weight: 700; color: var(--color-accent); margin-bottom: 0.5rem;">
++          <?php esc_html_e('Engineering Manifesto & Code of Practice', 'sahand-theme'); ?>
++        </h3>
++        <p style="margin: 0; font-size: 0.9375rem; line-height: 1.7;">
++          <?php esc_html_e('We prioritize verified tests over assumptions, deterministic logic over unmeasured magic, native internationalization over machine translation, and robust defense-in-depth security over convenience.', 'sahand-theme'); ?>
++        </p>
++      </div>
++
++    </div>
++
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-ai-lab.php b/wordpress/wp-content/themes/sahand-theme/page-ai-lab.php
+new file mode 100644
+index 0000000..6333dfb
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-ai-lab.php
+@@ -0,0 +1,189 @@
++<?php
++/**
++ * Template Name: AI Research Lab
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas-dark); color: #FFFFFF; min-height: 80vh; padding-block: 4rem 6rem; position: relative;">
++  
++  <!-- Neural Data Flow Background -->
++  <?php get_template_part('template-parts/components/neural-data-flow', null, array('variant' => 'neural', 'theme' => 'dark')); ?>
++
++  <div class="sahand-container" style="position: relative; z-index: 2;">
++    
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-dark); padding-bottom: 2rem;">
++      <div class="badge badge-tech" style="margin-bottom: 1rem; display: inline-block;">
++        <span>AI LAB // GEMINI 3.8 SERVER GATEWAY</span>
++      </div>
++      <h1 style="font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('آزمایشگاه پژوهشی هوش مصنوعی و مدل‌های زبانی');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Yapay Zeka ve Büyük Dil Modelleri Araştırma Laboratuvarı');
++        } else {
++            echo esc_html('AI Research Lab & Neural Inference Engines');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.125rem; color: var(--color-text-secondary-dark); max-width: 700px; margin-top: 0.75rem; line-height: 1.7;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('سیستم‌های هوش مصنوعی مستقل، پایپ‌لاین‌های استنتاج سروری امن، و بهینه‌سازی مدل‌های زبانی برای کاربردهای مالی و داده‌کاوی.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Finansal ve teknik uygulamalar için güvenli sunucu taraflı LLM çıkarım boru hatları ve otonom yapay zeka araçları.');
++        } else {
++            echo esc_html('Zero-leakage server-side AI pipelines, vector retrieval architectures, and real-time inference toolkits.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <!-- Interactive AI Gateway Console -->
++    <section class="sahand-ai-console" style="background: rgba(15, 23, 42, 0.75); border: 1px solid var(--color-border-dark); border-radius: var(--radius-lg); padding: 2rem; margin-bottom: 3.5rem; backdrop-filter: blur(12px);">
++      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid var(--color-border-dark); padding-bottom: 1rem;">
++        <span class="font-mono" style="font-size: 0.8125rem; color: var(--color-accent-electric); font-weight: 700;">
++          GATEWAY CONSOLE // REST INFERENCE (SERVER-SIDE)
++        </span>
++        <span class="badge badge-stable" style="font-size: 0.75rem;">GEMINI 3.8 FLASH</span>
++      </div>
++
++      <form id="sahand-ai-form" style="display: flex; flex-direction: column; gap: 1rem;">
++        <label for="ai-prompt-input" style="font-size: 0.875rem; color: var(--color-text-secondary-dark);">
++          <?php esc_html_e('Enter technical query or prompt for model analysis:', 'sahand-theme'); ?>
++        </label>
++        <textarea id="ai-prompt-input" name="prompt" rows="3" maxlength="2000" placeholder="<?php esc_attr_e('e.g. Analyze microsecond latency characteristics in distributed matching engines...', 'sahand-theme'); ?>" style="background: rgba(0, 0, 0, 0.4); border: 1px solid var(--color-border-dark); border-radius: var(--radius-md); padding: 0.85rem; color: #FFFFFF; font-family: monospace; resize: vertical;" required></textarea>
++
++        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
++          <span id="ai-status-indicator" class="font-mono" style="font-size: 0.8125rem; color: var(--color-text-secondary-dark);">
++            STATUS: READY
++          </span>
++          <button type="submit" id="ai-submit-btn" class="badge badge-stable" style="cursor: pointer; padding: 0.75rem 1.75rem; border: none; font-weight: 700;">
++            <?php esc_html_e('Execute Inference', 'sahand-theme'); ?> ⚡
++          </button>
++        </div>
++      </form>
++
++      <div id="ai-response-container" style="display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--color-border-dark);">
++        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: rgba(255, 255, 255, 0.45); font-family: monospace; margin-bottom: 0.5rem;">
++          <span id="ai-model-label">MODEL: GEMINI 3.8 FLASH</span>
++          <span id="ai-latency-label">LATENCY: --ms</span>
++        </div>
++        <div id="ai-response-text" class="font-mono" style="background: rgba(0, 0, 0, 0.5); padding: 1rem; border-radius: var(--radius-sm); border: 1px solid rgba(56, 189, 248, 0.2); font-size: 0.875rem; line-height: 1.6; white-space: pre-wrap; color: #E0F2FE;"></div>
++      </div>
++    </section>
++
++    <!-- Registered AI Tools Grid -->
++    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem;">
++      <?php
++      $ai_query = new WP_Query(array(
++          'post_type'      => 'sahand_ai_tool',
++          'post_status'    => 'publish',
++          'posts_per_page' => 20,
++      ));
++
++      if ($ai_query->have_posts()) :
++          while ($ai_query->have_posts()) : $ai_query->the_post();
++              $post_id    = get_the_ID();
++              $model      = get_post_meta($post_id, '_sahand_ai_model', true) ?: 'gemini-3.8-flash';
++              $task       = get_post_meta($post_id, '_sahand_ai_task', true);
++              $latency    = get_post_meta($post_id, '_sahand_ai_latency', true);
++              $status     = get_post_meta($post_id, '_sahand_ai_status', true) ?: 'active';
++              $demo_url   = get_post_meta($post_id, '_sahand_ai_demo_url', true);
++              ?>
++              <article class="sahand-card" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--color-border-dark); color: #FFFFFF;">
++                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
++                  <span class="badge badge-tech font-mono"><?php echo esc_html($model); ?></span>
++                  <span class="badge badge-stable" style="text-transform: uppercase; font-size: 0.75rem;"><?php echo esc_html($status); ?></span>
++                </div>
++
++                <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem;"><?php the_title(); ?></h2>
++                <div style="font-size: 0.875rem; color: var(--color-text-secondary-dark); line-height: 1.6; margin-bottom: 1rem;">
++                  <?php the_excerpt(); ?>
++                </div>
++
++                <div class="font-mono" style="font-size: 0.75rem; color: rgba(255, 255, 255, 0.5); display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1rem;">
++                  <?php if ($task) : ?><div>TASK: <?php echo esc_html($task); ?></div><?php endif; ?>
++                  <?php if ($latency) : ?><div>LATENCY: <span style="color: var(--color-accent-electric);"><?php echo esc_html($latency); ?></span></div><?php endif; ?>
++                </div>
++
++                <?php if ($demo_url) : ?>
++                  <a href="<?php echo esc_url($demo_url); ?>" target="_blank" rel="noopener noreferrer" class="badge badge-stable" style="text-decoration: none; display: inline-block;">
++                    <?php esc_html_e('Interactive Playground', 'sahand-theme'); ?> →
++                  </a>
++                <?php endif; ?>
++              </article>
++              <?php
++          endwhile;
++          wp_reset_postdata();
++      endif;
++      ?>
++    </div>
++
++  </div>
++</main>
++
++<script>
++document.addEventListener('DOMContentLoaded', function() {
++  const form = document.getElementById('sahand-ai-form');
++  const input = document.getElementById('ai-prompt-input');
++  const submitBtn = document.getElementById('ai-submit-btn');
++  const statusIndicator = document.getElementById('ai-status-indicator');
++  const container = document.getElementById('ai-response-container');
++  const textElem = document.getElementById('ai-response-text');
++  const latencyElem = document.getElementById('ai-latency-label');
++
++  if (!form) return;
++
++  form.addEventListener('submit', async function(e) {
++    e.preventDefault();
++    const prompt = input.value.trim();
++    if (!prompt) return;
++
++    submitBtn.disabled = true;
++    statusIndicator.textContent = 'STATUS: INFERENCE IN PROGRESS...';
++    statusIndicator.style.color = '#38BDF8';
++
++    try {
++      const response = await fetch('/wp-json/sahand/v1/ai/generate', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ prompt: prompt, language: '<?php echo esc_js($current_lang); ?>' })
++      });
++
++      const data = await response.json();
++      container.style.display = 'block';
++
++      if (response.ok && data.success) {
++        textElem.textContent = data.text;
++        latencyElem.textContent = 'LATENCY: ' + (data.latency_ms || '--') + 'ms';
++        statusIndicator.textContent = 'STATUS: COMPLETE (200 OK)';
++        statusIndicator.style.color = '#10B981';
++      } else {
++        textElem.textContent = 'Error: ' + (data.error || 'Request failed with HTTP ' + response.status);
++        statusIndicator.textContent = 'STATUS: ERROR (' + response.status + ')';
++        statusIndicator.style.color = '#EF4444';
++      }
++    } catch (err) {
++      container.style.display = 'block';
++      textElem.textContent = 'Network or client error: ' + err.message;
++      statusIndicator.textContent = 'STATUS: CONNECTION ERROR';
++      statusIndicator.style.color = '#EF4444';
++    } finally {
++      submitBtn.disabled = false;
++    }
++  });
++});
++</script>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-contact.php b/wordpress/wp-content/themes/sahand-theme/page-contact.php
+new file mode 100644
+index 0000000..477d24c
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-contact.php
+@@ -0,0 +1,200 @@
++<?php
++/**
++ * Template Name: Contact & Secure Communication
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++$contact_nonce = wp_create_nonce('sahand_contact_nonce');
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem;">
++  <div class="sahand-container" style="max-width: 800px;">
++    
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem; text-align: center;">
++      <div class="badge badge-stable" style="margin-bottom: 1rem; display: inline-block;">
++        <span>INGRESS // ENCRYPTED & RATE-LIMITED INBOX</span>
++      </div>
++      <h1 style="font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('ارتباط مستقیم و همکاری‌های فنی');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('İletişim ve Mühendislik İş Birlikleri');
++        } else {
++            echo esc_html('Direct Communication & Engineering Inquiries');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.125rem; color: var(--color-text-secondary); max-width: 600px; margin: 0.75rem auto 0; line-height: 1.7;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('جهت مشاوره فنی، طراحی سیستم‌های نرم‌افزاری یا همکاری در پروژه‌های مقیاس‌پذیر، پیام خود را مستقیماً ارسال فرمایید.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Yazılım sistemleri mimarisi, teknik danışmanlık veya ölçeklenebilir projeler için doğrudan iletişime geçebilirsiniz.');
++        } else {
++            echo esc_html('For systems architecture consulting, algorithm development, or engineering collaborations, send a direct verified message.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <div class="sahand-card" style="box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);">
++      
++      <!-- Live Server Response Alert Box -->
++      <div id="contact-alert" role="alert" style="display: none; padding: 1rem 1.25rem; border-radius: var(--radius-md); margin-bottom: 1.5rem; font-size: 0.9375rem; line-height: 1.5;"></div>
++
++      <form id="sahand-contact-form" method="post" action="<?php echo esc_url(rest_url('sahand/v1/contact')); ?>" novalidate>
++        
++        <!-- Security Nonce & Honeypot Fields -->
++        <input type="hidden" name="_wpnonce" id="contact-nonce" value="<?php echo esc_attr($contact_nonce); ?>">
++        <div style="position: absolute; left: -9999px; top: -9999px;" aria-hidden="true">
++          <label for="contact-hp">Leave this field blank</label>
++          <input type="text" name="_sahand_hp" id="contact-hp" tabindex="-1" autocomplete="off">
++        </div>
++
++        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem;">
++          <div>
++            <label for="contact-name" style="display: block; font-weight: 600; margin-bottom: 0.5rem; font-size: 0.875rem;">
++              <?php esc_html_e('Full Name / Organization:', 'sahand-theme'); ?> *
++            </label>
++            <input type="text" name="name" id="contact-name" required maxlength="100" style="width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); font-size: 1rem;" placeholder="<?php esc_attr_e('e.g. Sahand Haghi', 'sahand-theme'); ?>">
++          </div>
++
++          <div>
++            <label for="contact-email" style="display: block; font-weight: 600; margin-bottom: 0.5rem; font-size: 0.875rem;">
++              <?php esc_html_e('Email Address:', 'sahand-theme'); ?> *
++            </label>
++            <input type="email" name="email" id="contact-email" required maxlength="120" style="width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); font-size: 1rem;" placeholder="<?php esc_attr_e('name@domain.com', 'sahand-theme'); ?>">
++          </div>
++        </div>
++
++        <div style="margin-bottom: 2rem;">
++          <label for="contact-message" style="display: block; font-weight: 600; margin-bottom: 0.5rem; font-size: 0.875rem;">
++            <?php esc_html_e('Engineering Specifications / Inquiry Message:', 'sahand-theme'); ?> *
++          </label>
++          <textarea name="message" id="contact-message" rows="5" required minlength="5" maxlength="5000" style="width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); font-size: 1rem; resize: vertical;" placeholder="<?php esc_attr_e('Provide technical scope, objectives, or questions...', 'sahand-theme'); ?>"></textarea>
++        </div>
++
++        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
++          <span class="font-mono" style="font-size: 0.75rem; color: var(--color-text-tertiary);">
++            🔒 SSL ENCRYPTED · ATOMIC RATE-LIMITED
++          </span>
++
++          <button type="submit" id="contact-submit-btn" class="badge badge-stable" style="cursor: pointer; padding: 0.85rem 2rem; font-size: 1rem; border: none; font-weight: 700; border-radius: var(--radius-md);">
++            <?php esc_html_e('Send Message', 'sahand-theme'); ?> →
++          </button>
++        </div>
++
++      </form>
++    </div>
++
++    <!-- Official Communication Channels -->
++    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; margin-top: 3rem;">
++      <div class="sahand-card" style="text-align: center;">
++        <span class="font-mono" style="font-size: 0.75rem; color: var(--color-text-tertiary);">VERIFIED EMAIL</span>
++        <div style="font-weight: 700; margin-top: 0.5rem; font-size: 0.9375rem;">
++          <a href="mailto:haghisahnd@gmail.com" style="color: var(--color-accent); text-decoration: none;">haghisahnd@gmail.com</a>
++        </div>
++      </div>
++      <div class="sahand-card" style="text-align: center;">
++        <span class="font-mono" style="font-size: 0.75rem; color: var(--color-text-tertiary);">SOURCE CODE</span>
++        <div style="font-weight: 700; margin-top: 0.5rem; font-size: 0.9375rem;">
++          <a href="https://github.com/haghisahand-ai" target="_blank" rel="noopener noreferrer" style="color: var(--color-text-primary); text-decoration: none;">github.com/haghisahand-ai</a>
++        </div>
++      </div>
++      <div class="sahand-card" style="text-align: center;">
++        <span class="font-mono" style="font-size: 0.75rem; color: var(--color-text-tertiary);">PRODUCTION DOMAIN</span>
++        <div style="font-weight: 700; margin-top: 0.5rem; font-size: 0.9375rem;">
++          <span style="color: var(--color-accent);">sahandhaghi.site</span>
++        </div>
++      </div>
++    </div>
++
++  </div>
++</main>
++
++<script>
++document.addEventListener('DOMContentLoaded', function() {
++  const form = document.getElementById('sahand-contact-form');
++  const alertBox = document.getElementById('contact-alert');
++  const submitBtn = document.getElementById('contact-submit-btn');
++
++  if (!form) return;
++
++  form.addEventListener('submit', async function(e) {
++    e.preventDefault();
++
++    const name = document.getElementById('contact-name').value.trim();
++    const email = document.getElementById('contact-email').value.trim();
++    const message = document.getElementById('contact-message').value.trim();
++    const nonce = document.getElementById('contact-nonce').value;
++    const hp = document.getElementById('contact-hp').value;
++
++    // Client-side quick check
++    if (!name || !email || !message || message.length < 5) {
++      showAlert('error', '<?php echo esc_js(__('Please fill out all required fields with a message of at least 5 characters.', 'sahand-theme')); ?>');
++      return;
++    }
++
++    submitBtn.disabled = true;
++    submitBtn.textContent = '<?php echo esc_js(__('Transmitting...', 'sahand-theme')); ?>';
++
++    try {
++      const response = await fetch('<?php echo esc_url(rest_url('sahand/v1/contact')); ?>', {
++        method: 'POST',
++        headers: {
++          'Content-Type': 'application/json',
++          'X-WP-Nonce': nonce
++        },
++        body: JSON.stringify({
++          name: name,
++          email: email,
++          message: message,
++          _wpnonce: nonce,
++          _sahand_hp: hp
++        })
++      });
++
++      const data = await response.json();
++
++      if (response.ok && data.success) {
++        showAlert('success', data.message || '<?php echo esc_js(__('Your message has been delivered.', 'sahand-theme')); ?>');
++        form.reset();
++      } else {
++        const errorMsg = data.message || ('<?php echo esc_js(__('Submission failed with status', 'sahand-theme')); ?> ' + response.status);
++        showAlert('error', errorMsg);
++      }
++    } catch (err) {
++      showAlert('error', '<?php echo esc_js(__('Network communication error. Please check your connection or contact via direct email.', 'sahand-theme')); ?>');
++    } finally {
++      submitBtn.disabled = false;
++      submitBtn.textContent = '<?php echo esc_js(__('Send Message', 'sahand-theme')); ?> →';
++    }
++  });
++
++  function showAlert(type, message) {
++    alertBox.style.display = 'block';
++    if (type === 'success') {
++      alertBox.style.background = 'rgba(16, 185, 129, 0.1)';
++      alertBox.style.border = '1px solid #10B981';
++      alertBox.style.color = '#065F46';
++    } else {
++      alertBox.style.background = 'rgba(239, 68, 68, 0.1)';
++      alertBox.style.border = '1px solid #EF4444';
++      alertBox.style.color = '#991B1B';
++    }
++    alertBox.textContent = message;
++    alertBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
++  }
++});
++</script>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-engineering.php b/wordpress/wp-content/themes/sahand-theme/page-engineering.php
+new file mode 100644
+index 0000000..9313b77
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-engineering.php
+@@ -0,0 +1,99 @@
++<?php
++/**
++ * Template Name: Engineering Principles & Architecture
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem; position: relative;">
++  
++  <!-- Engineering Data Flow Background -->
++  <?php get_template_part('template-parts/components/neural-data-flow', null, array('variant' => 'engineering', 'theme' => 'light')); ?>
++
++  <div class="sahand-container" style="position: relative; z-index: 2;">
++    
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++      <div class="badge badge-stable" style="margin-bottom: 1rem; display: inline-block;">
++        <span>DISCIPLINES // ARCHITECTURAL CONSTITUTION</span>
++      </div>
++      <h1 style="font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('اصول مهندسی، معماری سیستم‌ها و انضباط فنی');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Mühendislik İlkeleri, Sistem Mimarisi ve Teknik Disiplin');
++        } else {
++            echo esc_html('Engineering Disciplines, Systems Architecture & Principles');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.125rem; color: var(--color-text-secondary); max-width: 700px; margin-top: 0.75rem; line-height: 1.7;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('توسعه بر پایه تفکر سامانه‌ای، دقت ریاضی، معماری دفاع در عمق، و کاهش وابستگی‌های شکننده.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Sistemik düşünce, matematiksel hassasiyet, derinlemesine savunma ve dayanıklı yazılım mimarisi ilkeleri.');
++        } else {
++            echo esc_html('Decoupled microstructures, zero-trust cybersecurity, deterministic execution, and sovereign digital product development.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem; margin-bottom: 4rem;">
++      
++      <div class="sahand-card">
++        <div class="badge badge-tech font-mono" style="margin-bottom: 1rem;">PRINCIPLE // 01</div>
++        <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.75rem;">
++          <?php esc_html_e('Defense-in-Depth Cybersecurity', 'sahand-theme'); ?>
++        </h2>
++        <p style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.7;">
++          <?php esc_html_e('Every operational boundary is treated as zero-trust. Verification of object-level capabilities, strict cryptographic nonces, atomic concurrency rate limiting, and sanitized contexts protect every ingress.', 'sahand-theme'); ?>
++        </p>
++      </div>
++
++      <div class="sahand-card">
++        <div class="badge badge-tech font-mono" style="margin-bottom: 1rem;">PRINCIPLE // 02</div>
++        <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.75rem;">
++          <?php esc_html_e('Decoupled Modular Architecture', 'sahand-theme'); ?>
++        </h2>
++        <p style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.7;">
++          <?php esc_html_e('Clean separation between presentation (custom theme), business logic & storage (custom core plugin), and headless APIs prevents single points of failure and platform lock-in.', 'sahand-theme'); ?>
++        </p>
++      </div>
++
++      <div class="sahand-card">
++        <div class="badge badge-tech font-mono" style="margin-bottom: 1rem;">PRINCIPLE // 03</div>
++        <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.75rem;">
++          <?php esc_html_e('Sub-Millisecond Order Routing & Flow', 'sahand-theme'); ?>
++        </h2>
++        <p style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.7;">
++          <?php esc_html_e('MicroMap price-action engines and algorithmic execution windows designed around London and New York market openings with deterministic risk parameters.', 'sahand-theme'); ?>
++        </p>
++      </div>
++
++      <div class="sahand-card">
++        <div class="badge badge-tech font-mono" style="margin-bottom: 1rem;">PRINCIPLE // 04</div>
++        <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.75rem;">
++          <?php esc_html_e('Native Multilingual Invariance', 'sahand-theme'); ?>
++        </h2>
++        <p style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.7;">
++          <?php esc_html_e('Persian (RTL), English (LTR), and Turkish (LTR) treated with equal architectural first-class citizenship: native typographic rules, bidirectional CSS layout, and localized SEO hreflang headers.', 'sahand-theme'); ?>
++        </p>
++      </div>
++
++    </div>
++
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-insights.php b/wordpress/wp-content/themes/sahand-theme/page-insights.php
+new file mode 100644
+index 0000000..46dd843
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-insights.php
+@@ -0,0 +1,122 @@
++<?php
++/**
++ * Template Name: Technical Insights & Research
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem;">
++  <div class="sahand-container">
++    
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++      <div class="badge badge-stable" style="margin-bottom: 1rem; display: inline-block;">
++        <span>PUBLICATIONS // TECHNICAL PAPERS & INSIGHTS</span>
++      </div>
++      <h1 style="font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('بینش‌های فنی، تحلیل‌های معماری و پژوهش‌ها');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Teknik Makaleler, Mimari Analizler ve Araştırmalar');
++        } else {
++            echo esc_html('Technical Insights, Architecture Analysis & Research');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.125rem; color: var(--color-text-secondary); max-width: 700px; margin-top: 0.75rem; line-height: 1.7;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('مقالات تحلیلی در حوزه سیستم‌های معاملاتی، امنیت سایبری، الگوهای نرم‌افزاری و هوش مصنوعی.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Finansal işlem motorları, siber güvenlik, yazılım kalıpları ve yapay zeka üzerine derinlemesine teknik incelemeler.');
++        } else {
++            echo esc_html('Rigorous technical explorations of distributed systems, algorithmic microstructure, cybersecurity threat modeling, and modern software paradigms.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem;">
++      <?php
++      $insights_query = new WP_Query(array(
++          'post_type'      => 'sahand_insight',
++          'post_status'    => 'publish',
++          'posts_per_page' => 20,
++          'orderby'        => 'date',
++          'order'          => 'DESC',
++      ));
++
++      if ($insights_query->have_posts()) :
++          while ($insights_query->have_posts()) : $insights_query->the_post();
++              $post_id       = get_the_ID();
++              $reading_time  = get_post_meta($post_id, '_sahand_insight_reading_time', true) ?: '5';
++              $difficulty    = get_post_meta($post_id, '_sahand_insight_difficulty', true) ?: 'intermediate';
++              $takeaway      = get_post_meta($post_id, '_sahand_insight_key_takeaway', true);
++              $peer_reviewed = get_post_meta($post_id, '_sahand_insight_peer_reviewed', true);
++              ?>
++              <article id="post-<?php the_ID(); ?>" <?php post_class('sahand-card'); ?> style="display: flex; flex-direction: column; justify-content: space-between;">
++                <div>
++                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
++                    <span class="badge badge-tech font-mono" style="font-size: 0.75rem;">
++                      <?php echo esc_html($reading_time); ?> MIN READ
++                    </span>
++                    <span class="badge badge-stable font-mono" style="text-transform: uppercase; font-size: 0.75rem;">
++                      <?php echo esc_html($difficulty); ?>
++                    </span>
++                  </div>
++
++                  <h2 style="font-size: 1.375rem; font-weight: 700; margin-bottom: 0.75rem;">
++                    <a href="<?php the_permalink(); ?>" style="color: inherit; text-decoration: none;">
++                      <?php the_title(); ?>
++                    </a>
++                  </h2>
++
++                  <div style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1.25rem;">
++                    <?php the_excerpt(); ?>
++                  </div>
++
++                  <?php if ($takeaway) : ?>
++                    <div style="background: rgba(0, 0, 0, 0.02); border-left: 3px solid var(--color-accent); padding: 0.75rem; font-size: 0.8125rem; color: var(--color-text-secondary);">
++                      <strong><?php esc_html_e('Core Thesis:', 'sahand-theme'); ?></strong>
++                      <p style="margin: 0.25rem 0 0;"><?php echo esc_html($takeaway); ?></p>
++                    </div>
++                  <?php endif; ?>
++                </div>
++
++                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border-subtle); display: flex; justify-content: space-between; align-items: center;">
++                  <a href="<?php the_permalink(); ?>" style="color: var(--color-accent); text-decoration: none; font-size: 0.875rem; font-weight: 600;">
++                    <?php esc_html_e('Read Full Analysis', 'sahand-theme'); ?> →
++                  </a>
++                  <?php if ($peer_reviewed === 'yes') : ?>
++                    <span class="badge badge-stable" style="font-size: 0.7rem;">✓ VERIFIED</span>
++                  <?php endif; ?>
++                </div>
++              </article>
++              <?php
++          endwhile;
++          wp_reset_postdata();
++      else :
++          ?>
++          <div class="sahand-card" style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
++            <p style="color: var(--color-text-secondary); font-size: 1.125rem;">
++              <?php esc_html_e('Technical insights are being authored and reviewed. Check back soon.', 'sahand-theme'); ?>
++            </p>
++          </div>
++          <?php
++      endif;
++      ?>
++    </div>
++
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-launchpad.php b/wordpress/wp-content/themes/sahand-theme/page-launchpad.php
+new file mode 100644
+index 0000000..01fb647
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-launchpad.php
+@@ -0,0 +1,123 @@
++<?php
++/**
++ * Template Name: Launchpad Products
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem;">
++  <div class="sahand-container">
++    
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++      <div class="badge badge-stable" style="margin-bottom: 1rem; display: inline-block;">
++        <span>RELEASE MATRIX // SOVEREIGN UTILITIES</span>
++      </div>
++      <h1 style="font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('پرتابگاه محصولات دیجیتال و ابزارهای مستقل');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Launchpad — Dijital Ürünler ve Bağımsız Araçlar');
++        } else {
++            echo esc_html('Launchpad — Digital Products & Sovereign Tools');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.125rem; color: var(--color-text-secondary); max-width: 700px; margin-top: 0.75rem; line-height: 1.7;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('ابزارهای توسعه‌یافته، پکیج‌های مستقل و نرم‌افزارهای کاربردی با پایش نسخه‌گذاری SemVer.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('SemVer sürüm takipli bağımsız dijital ürünler, yazılım paketleri ve üretim araçları.');
++        } else {
++            echo esc_html('Production-grade open-source tools, developer utilities, and sovereign products with strict SemVer versioning.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem;">
++      <?php
++      $products_query = new WP_Query(array(
++          'post_type'      => 'sahand_product',
++          'post_status'    => 'publish',
++          'posts_per_page' => 20,
++          'orderby'        => 'date',
++          'order'          => 'DESC',
++      ));
++
++      if ($products_query->have_posts()) :
++          while ($products_query->have_posts()) : $products_query->the_post();
++              $post_id      = get_the_ID();
++              $version      = get_post_meta($post_id, '_sahand_product_version', true) ?: '1.0.0';
++              $status       = get_post_meta($post_id, '_sahand_product_status', true) ?: 'stable';
++              $download_url = get_post_meta($post_id, '_sahand_product_download_url', true);
++              $changelog    = get_post_meta($post_id, '_sahand_product_changelog', true);
++              ?>
++              <article id="post-<?php the_ID(); ?>" <?php post_class('sahand-card'); ?> style="display: flex; flex-direction: column; justify-content: space-between;">
++                <div>
++                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
++                    <span class="badge badge-tech" style="font-family: monospace;">
++                      v<?php echo esc_html($version); ?>
++                    </span>
++                    <span class="badge badge-stable" style="text-transform: uppercase; font-size: 0.75rem;">
++                      <?php echo esc_html($status); ?>
++                    </span>
++                  </div>
++
++                  <h2 style="font-size: 1.375rem; font-weight: 700; margin-bottom: 0.75rem;">
++                    <a href="<?php the_permalink(); ?>" style="color: inherit; text-decoration: none;">
++                      <?php the_title(); ?>
++                    </a>
++                  </h2>
++
++                  <div style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1.25rem;">
++                    <?php the_excerpt(); ?>
++                  </div>
++
++                  <?php if ($changelog) : ?>
++                    <div style="background: rgba(0,0,0,0.02); border-radius: var(--radius-sm); padding: 0.75rem; font-family: monospace; font-size: 0.75rem; color: var(--color-text-tertiary); max-height: 80px; overflow-y: auto;">
++                      <?php echo nl2br(esc_html($changelog)); ?>
++                    </div>
++                  <?php endif; ?>
++                </div>
++
++                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border-subtle); display: flex; justify-content: space-between; align-items: center;">
++                  <a href="<?php the_permalink(); ?>" style="color: var(--color-accent); text-decoration: none; font-size: 0.875rem; font-weight: 600;">
++                    <?php esc_html_e('Release Notes', 'sahand-theme'); ?> →
++                  </a>
++                  <?php if ($download_url) : ?>
++                    <a href="<?php echo esc_url($download_url); ?>" target="_blank" rel="noopener noreferrer" class="badge badge-stable" style="text-decoration: none;">
++                      <?php esc_html_e('Access / Download', 'sahand-theme'); ?>
++                    </a>
++                  <?php endif; ?>
++                </div>
++              </article>
++              <?php
++          endwhile;
++          wp_reset_postdata();
++      else :
++          ?>
++          <div class="sahand-card" style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
++            <p style="color: var(--color-text-secondary); font-size: 1.125rem;">
++              <?php esc_html_e('Product releases are currently in staging validation. Releases will appear here.', 'sahand-theme'); ?>
++            </p>
++          </div>
++          <?php
++      endif;
++      ?>
++    </div>
++
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/page-projects.php b/wordpress/wp-content/themes/sahand-theme/page-projects.php
+new file mode 100644
+index 0000000..ac5171d
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/page-projects.php
+@@ -0,0 +1,135 @@
++<?php
++/**
++ * Template Name: Projects Archive & Directory
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem;">
++  <div class="sahand-container">
++    
++    <!-- Section Header -->
++    <header style="margin-bottom: 3.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++      <div class="badge badge-stable" style="margin-bottom: 1rem; display: inline-block;">
++        <span>SYS.ARCH // CASE STUDIES</span>
++      </div>
++      <h1 style="font-size: clamp(2rem, 4vw, 3rem); font-weight: 800; letter-spacing: -0.02em;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('پروژه‌ها و مطالعات موردی مهندسی');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Mühendislik Projeleri ve Vaka Çalışmaları');
++        } else {
++            echo esc_html('Engineering Projects & Architectural Case Studies');
++        }
++        ?>
++      </h1>
++      <p style="font-size: 1.125rem; color: var(--color-text-secondary); max-width: 700px; margin-top: 0.75rem; line-height: 1.7;">
++        <?php
++        if ($current_lang === 'fa') {
++            echo esc_html('معماری‌های فنی، سیستم‌های الگوریتمی، و زیرساخت‌های مقیاس‌پذیر همراه با جزئیات فنی و چالش‌های حل‌شده.');
++        } elseif ($current_lang === 'tr') {
++            echo esc_html('Ölçeklenebilir sistemler, algoritmik motorlar ve çözülen teknik zorluklar hakkında ayrıntılı vaka analizleri.');
++        } else {
++            echo esc_html('In-depth technical case studies on high-throughput order routing, sovereign AI gateways, and multi-tier infrastructure.');
++        }
++        ?>
++      </p>
++    </header>
++
++    <!-- Projects Grid -->
++    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 2rem;">
++      <?php
++      $projects_query = new WP_Query(array(
++          'post_type'      => 'sahand_project',
++          'post_status'    => 'publish',
++          'posts_per_page' => 20,
++          'orderby'        => 'date',
++          'order'          => 'DESC',
++      ));
++
++      if ($projects_query->have_posts()) :
++          while ($projects_query->have_posts()) : $projects_query->the_post();
++              $post_id   = get_the_ID();
++              $status    = get_post_meta($post_id, '_sahand_project_status', true) ?: 'production';
++              $timeline  = get_post_meta($post_id, '_sahand_project_timeline', true);
++              $github    = get_post_meta($post_id, '_sahand_project_github', true);
++              $demo_url  = get_post_meta($post_id, '_sahand_project_demo_url', true);
++              $problem   = get_post_meta($post_id, '_sahand_project_problem', true);
++              $solution  = get_post_meta($post_id, '_sahand_project_solution', true);
++              ?>
++              <article id="post-<?php the_ID(); ?>" <?php post_class('sahand-card'); ?> style="display: flex; flex-direction: column; justify-content: space-between;">
++                <div>
++                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
++                    <span class="badge badge-stable" style="text-transform: uppercase; font-size: 0.75rem;">
++                      <?php echo esc_html($status); ?>
++                    </span>
++                    <?php if ($timeline) : ?>
++                      <span class="font-mono" style="font-size: 0.75rem; color: var(--color-text-tertiary);">
++                        <?php echo esc_html($timeline); ?>
++                      </span>
++                    <?php endif; ?>
++                  </div>
++
++                  <h2 style="font-size: 1.375rem; font-weight: 700; margin-bottom: 0.75rem;">
++                    <a href="<?php the_permalink(); ?>" style="color: inherit; text-decoration: none;">
++                      <?php the_title(); ?>
++                    </a>
++                  </h2>
++
++                  <div style="font-size: 0.9375rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1.25rem;">
++                    <?php the_excerpt(); ?>
++                  </div>
++
++                  <?php if ($problem) : ?>
++                    <div style="margin-bottom: 1rem; padding: 0.85rem; background: rgba(0, 0, 0, 0.02); border-left: 3px solid var(--color-accent); font-size: 0.875rem;">
++                      <strong style="color: var(--color-text-primary);"><?php esc_html_e('Challenge:', 'sahand-theme'); ?></strong>
++                      <p style="margin: 0.25rem 0 0; color: var(--color-text-secondary);"><?php echo esc_html(wp_trim_words($problem, 20)); ?></p>
++                    </div>
++                  <?php endif; ?>
++                </div>
++
++                <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border-subtle);">
++                  <a href="<?php the_permalink(); ?>" class="badge badge-tech" style="text-decoration: none;">
++                    <?php esc_html_e('Architecture Deep-Dive', 'sahand-theme'); ?> →
++                  </a>
++                  <?php if ($github) : ?>
++                    <a href="<?php echo esc_url($github); ?>" target="_blank" rel="noopener noreferrer" class="badge" style="text-decoration: none; background: rgba(0,0,0,0.04); color: var(--color-text-primary);">
++                      GitHub
++                    </a>
++                  <?php endif; ?>
++                  <?php if ($demo_url) : ?>
++                    <a href="<?php echo esc_url($demo_url); ?>" target="_blank" rel="noopener noreferrer" class="badge" style="text-decoration: none; background: rgba(2, 132, 199, 0.1); color: var(--color-accent);">
++                      <?php esc_html_e('Demo / Staging', 'sahand-theme'); ?>
++                    </a>
++                  <?php endif; ?>
++                </div>
++              </article>
++              <?php
++          endwhile;
++          wp_reset_postdata();
++      else :
++          ?>
++          <div class="sahand-card" style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
++            <p style="color: var(--color-text-secondary); font-size: 1.125rem;">
++              <?php esc_html_e('Engineering project case studies are being published. Check back soon.', 'sahand-theme'); ?>
++            </p>
++          </div>
++          <?php
++      endif;
++      ?>
++    </div>
++
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/single-sahand_project.php b/wordpress/wp-content/themes/sahand-theme/single-sahand_project.php
+new file mode 100644
+index 0000000..672fe7f
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/single-sahand_project.php
+@@ -0,0 +1,104 @@
++<?php
++/**
++ * Single Template for sahand_project CPT
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); padding-block: 4rem 6rem;">
++  <div class="sahand-container">
++    <?php
++    while (have_posts()) : the_post();
++        $post_id   = get_the_ID();
++        $status    = get_post_meta($post_id, '_sahand_project_status', true) ?: 'production';
++        $timeline  = get_post_meta($post_id, '_sahand_project_timeline', true);
++        $github    = get_post_meta($post_id, '_sahand_project_github', true);
++        $demo_url  = get_post_meta($post_id, '_sahand_project_demo_url', true);
++        $problem   = get_post_meta($post_id, '_sahand_project_problem', true);
++        $solution  = get_post_meta($post_id, '_sahand_project_solution', true);
++        ?>
++        <article id="post-<?php the_ID(); ?>" <?php post_class(); ?> style="max-width: 860px; margin-inline: auto;">
++          
++          <nav aria-label="<?php esc_attr_e('Breadcrumbs', 'sahand-theme'); ?>" style="margin-bottom: 2rem;">
++            <a href="<?php echo esc_url(home_url('/' . $current_lang . '/projects/')); ?>" style="color: var(--color-accent); text-decoration: none; font-size: 0.875rem;">
++              ← <?php esc_html_e('Back to Projects', 'sahand-theme'); ?>
++            </a>
++          </nav>
++
++          <header style="margin-bottom: 3rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++            <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem;">
++              <span class="badge badge-stable" style="text-transform: uppercase;">
++                <?php echo esc_html($status); ?>
++              </span>
++              <?php if ($timeline) : ?>
++                <span class="font-mono" style="font-size: 0.8125rem; color: var(--color-text-tertiary);">
++                  <?php echo esc_html($timeline); ?>
++                </span>
++              <?php endif; ?>
++            </div>
++
++            <h1 style="font-size: clamp(2.25rem, 5vw, 3.25rem); font-weight: 800; line-height: 1.2;">
++              <?php the_title(); ?>
++            </h1>
++
++            <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem;">
++              <?php if ($github) : ?>
++                <a href="<?php echo esc_url($github); ?>" target="_blank" rel="noopener noreferrer" class="badge badge-tech" style="text-decoration: none; padding: 0.6rem 1.2rem;">
++                  GitHub Repository ↗
++                </a>
++              <?php endif; ?>
++              <?php if ($demo_url) : ?>
++                <a href="<?php echo esc_url($demo_url); ?>" target="_blank" rel="noopener noreferrer" class="badge badge-stable" style="text-decoration: none; padding: 0.6rem 1.2rem;">
++                  Live Deployment / Staging ↗
++                </a>
++              <?php endif; ?>
++            </div>
++          </header>
++
++          <?php if ($problem || $solution) : ?>
++            <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 3rem;">
++              <?php if ($problem) : ?>
++                <div style="background: rgba(239, 68, 68, 0.04); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius-md); padding: 1.5rem;">
++                  <h2 style="font-size: 1.125rem; font-weight: 700; color: #DC2626; margin-bottom: 0.75rem;">
++                    <?php esc_html_e('Problem & Technical Challenge', 'sahand-theme'); ?>
++                  </h2>
++                  <p style="font-size: 0.9375rem; line-height: 1.7; color: var(--color-text-secondary); margin: 0;">
++                    <?php echo nl2br(esc_html($problem)); ?>
++                  </p>
++                </div>
++              <?php endif; ?>
++
++              <?php if ($solution) : ?>
++                <div style="background: rgba(2, 132, 199, 0.04); border: 1px solid rgba(2, 132, 199, 0.2); border-radius: var(--radius-md); padding: 1.5rem;">
++                  <h2 style="font-size: 1.125rem; font-weight: 700; color: var(--color-accent); margin-bottom: 0.75rem;">
++                    <?php esc_html_e('Architectural Solution & Implementation', 'sahand-theme'); ?>
++                  </h2>
++                  <p style="font-size: 0.9375rem; line-height: 1.7; color: var(--color-text-secondary); margin: 0;">
++                    <?php echo nl2br(esc_html($solution)); ?>
++                  </p>
++                </div>
++              <?php endif; ?>
++            </section>
++          <?php endif; ?>
++
++          <div class="entry-content" style="font-size: 1.125rem; line-height: 1.8; color: var(--color-text-secondary);">
++            <?php the_content(); ?>
++          </div>
++
++        </article>
++        <?php
++    endwhile;
++    ?>
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/single.php b/wordpress/wp-content/themes/sahand-theme/single.php
+new file mode 100644
+index 0000000..890dc68
+--- /dev/null
++++ b/wordpress/wp-content/themes/sahand-theme/single.php
+@@ -0,0 +1,42 @@
++<?php
++/**
++ * Generic Single Post Template
++ *
++ * @package SahandTheme
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++get_header();
++$current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_lang() : 'fa';
++?>
++
++<main id="primary" class="site-main" style="background-color: var(--color-canvas); color: var(--color-text-primary); min-height: 80vh; padding-block: 4rem 6rem;">
++  <div class="sahand-container" style="max-width: 820px;">
++    <?php
++    while (have_posts()) : the_post();
++        ?>
++        <article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
++          <header style="margin-bottom: 2.5rem; border-bottom: 1px solid var(--color-border-subtle); padding-bottom: 2rem;">
++            <div class="font-mono" style="font-size: 0.8125rem; color: var(--color-text-tertiary); margin-bottom: 0.75rem;">
++              <span><?php echo get_the_date('Y.m.d'); ?></span> · <span><?php echo esc_html(get_post_type()); ?></span>
++            </div>
++            <h1 style="font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; line-height: 1.25;">
++              <?php the_title(); ?>
++            </h1>
++          </header>
++
++          <div class="entry-content" style="font-size: 1.125rem; line-height: 1.8; color: var(--color-text-secondary);">
++            <?php the_content(); ?>
++          </div>
++        </article>
++        <?php
++    endwhile;
++    ?>
++  </div>
++</main>
++
++<?php
++get_footer();
+diff --git a/wordpress/wp-content/themes/sahand-theme/template-parts/components/neural-data-flow.php b/wordpress/wp-content/themes/sahand-theme/template-parts/components/neural-data-flow.php
+index 44ed5ea..de9a832 100644
+--- a/wordpress/wp-content/themes/sahand-theme/template-parts/components/neural-data-flow.php
++++ b/wordpress/wp-content/themes/sahand-theme/template-parts/components/neural-data-flow.php
+@@ -24,7 +24,7 @@ $active_color = $is_light ? '#0284C7' : '#38BDF8';
+ $node_fill = $is_light ? '#FFFFFF' : '#070B14';
+ $node_stroke = $is_light ? '#0284C7' : '#38BDF8';
+ ?>
+-<div class="sahand-neural-bg absolute inset-0 overflow-hidden pointer-events-none select-none z-0" aria-hidden="true" data-variant="<?php echo esc_attr($variant); ?>">
++<div class="sahand-neural-bg absolute inset-0 overflow-hidden pointer-events-none select-none z-0" aria-hidden="true" data-sahand-data-flow="<?php echo esc_attr($variant); ?>" data-theme="<?php echo esc_attr($theme); ?>">
+   <svg viewBox="0 0 1440 500" preserveAspectRatio="xMidYMid slice" class="w-full h-full opacity-60" fill="none" xmlns="http://www.w3.org/2000/svg">
+     <defs>
+       <linearGradient id="<?php echo $gradient_id; ?>" x1="<?php echo $is_rtl ? '100%' : '0%'; ?>" y1="0%" x2="<?php echo $is_rtl ? '0%' : '100%'; ?>" y2="0%">
+-- 
+2.34.1
+

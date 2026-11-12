@@ -563,7 +563,11 @@ class Sahand_SEO_Manager {
      * Saves custom SEO fields with authorization and nonce checks
      */
     public static function save_seo_meta($post_id) {
-        if (!Sahand_Security::verify_authorized_action('sahand_seo_nonce', 'sahand_save_seo_meta', 'edit_post')) {
+        if (!in_array(get_post_type($post_id), self::MANAGED_POST_TYPES, true) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
+            return;
+        }
+
+        if (!Sahand_Security::verify_authorized_action('sahand_seo_nonce', 'sahand_save_seo_meta', 'edit_post', $post_id)) {
             return;
         }
 

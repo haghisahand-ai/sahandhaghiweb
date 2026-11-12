@@ -97,7 +97,7 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
             </div>
             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
               <span>Sovereign AI Gateway</span>
-              <span style="color: var(--color-success);">Gemini 2.5 Server</span>
+              <span style="color: var(--color-success);">Gemini 3.8 Server</span>
             </div>
             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
               <span>Decoupled CMS Platform</span>
@@ -138,7 +138,7 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
           <p style="font-size: 0.875rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1rem;">
             <?php esc_html_e('Server-side LLM inference pipelines, vector embeddings, and prompt defense.', 'sahand-theme'); ?>
           </p>
-          <div class="badge badge-tech">Gemini 2.5 · Vector RAG</div>
+          <div class="badge badge-tech">Gemini 3.8 · Vector RAG</div>
         </div>
 
         <div class="sahand-card">

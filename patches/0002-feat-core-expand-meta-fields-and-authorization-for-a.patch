@@ -1,0 +1,787 @@
+From 250ed561fb2945337eeebd55d8dfcf8d9c8a5601 Mon Sep 17 00:00:00 2001
+From: Sahand Haghi & Engineering Team <haghisahnd@gmail.com>
+Date: Wed, 11 Nov 2026 21:01:09 +0000
+Subject: [PATCH 2/5] feat(core): expand meta fields and authorization for all
+ custom post types
+
+---
+ .../sahand-core/includes/class-ai-gateway.php | 218 +++++++++++++++++
+ .../includes/class-meta-fields.php            | 223 +++++++++++++++++-
+ .../sahand-core/includes/class-rest-api.php   | 169 ++++++++++++-
+ 3 files changed, 600 insertions(+), 10 deletions(-)
+ create mode 100644 wordpress/wp-content/plugins/sahand-core/includes/class-ai-gateway.php
+
+diff --git a/wordpress/wp-content/plugins/sahand-core/includes/class-ai-gateway.php b/wordpress/wp-content/plugins/sahand-core/includes/class-ai-gateway.php
+new file mode 100644
+index 0000000..82646e6
+--- /dev/null
++++ b/wordpress/wp-content/plugins/sahand-core/includes/class-ai-gateway.php
+@@ -0,0 +1,218 @@
++<?php
++/**
++ * Server-Side AI Inference Gateway (Gemini & Modular Provider Architecture)
++ *
++ * @package SahandCore
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++class Sahand_AI_Gateway {
++
++    /**
++     * REST namespace and route
++     */
++    const NAMESPACE = 'sahand/v1';
++    const ROUTE = '/ai/generate';
++
++    /**
++     * Default Gemini model
++     */
++    const DEFAULT_MODEL = 'gemini-3.8-flash';
++
++    /**
++     * Maximum permitted characters in a single prompt
++     */
++    const MAX_PROMPT_LENGTH = 2000;
++
++    /**
++     * Initialize the AI gateway REST endpoints
++     */
++    public static function init() {
++        add_action('rest_api_init', array(__CLASS__, 'register_routes'));
++    }
++
++    /**
++     * Register REST API routes
++     */
++    public static function register_routes() {
++        register_rest_route(self::NAMESPACE, self::ROUTE, array(
++            'methods'             => WP_REST_Server::CREATABLE,
++            'callback'            => array(__CLASS__, 'handle_generate_request'),
++            'permission_callback' => '__return_true', // Public endpoint guarded by atomic rate limiting & honeypot
++            'args'                => array(
++                'prompt' => array(
++                    'required'          => true,
++                    'type'              => 'string',
++                    'maxLength'         => self::MAX_PROMPT_LENGTH,
++                    'sanitize_callback' => 'sanitize_textarea_field',
++                    'validate_callback' => array(__CLASS__, 'validate_prompt'),
++                ),
++                'task' => array(
++                    'required'          => false,
++                    'type'              => 'string',
++                    'default'           => 'general',
++                    'sanitize_callback' => 'sanitize_text_field',
++                ),
++                'language' => array(
++                    'required'          => false,
++                    'type'              => 'string',
++                    'default'           => 'en',
++                    'sanitize_callback' => 'sanitize_text_field',
++                ),
++            ),
++        ));
++    }
++
++    /**
++     * Validate prompt string
++     *
++     * @param mixed $value
++     * @return bool
++     */
++    public static function validate_prompt($value) {
++        if (!is_string($value)) {
++            return false;
++        }
++
++        $length = mb_strlen(trim($value), 'UTF-8');
++        return ($length >= 2 && $length <= self::MAX_PROMPT_LENGTH);
++    }
++
++    /**
++     * Retrieve the server-side Gemini API key securely
++     *
++     * @return string
++     */
++    public static function get_api_key() {
++        // 1. Check defined constant in wp-config.php (recommended for production)
++        if (defined('SAHAND_GEMINI_API_KEY') && !empty(SAHAND_GEMINI_API_KEY)) {
++            return (string) SAHAND_GEMINI_API_KEY;
++        }
++
++        // 2. Check environment variable
++        $env_key = getenv('GEMINI_API_KEY');
++        if (!empty($env_key)) {
++            return (string) $env_key;
++        }
++
++        if (!empty($_ENV['GEMINI_API_KEY'])) {
++            return (string) $_ENV['GEMINI_API_KEY'];
++        }
++
++        return '';
++    }
++
++    /**
++     * Handle AI generation requests from the client
++     *
++     * @param WP_REST_Request $request
++     * @return WP_REST_Response
++     */
++    public static function handle_generate_request($request) {
++        // 1. Atomic Rate Limiting: 10 requests per 5 minutes per IP
++        $rate_check = Sahand_Security::check_rate_limit('ai_gateway', 10, 300);
++        if (!$rate_check['allowed']) {
++            $response = new WP_REST_Response(array(
++                'success'     => false,
++                'error'       => 'Rate limit exceeded for AI inference. Please try again later.',
++                'retry_after' => $rate_check['retry_after'],
++            ), 429);
++            $response->header('Retry-After', (string) $rate_check['retry_after']);
++            return $response;
++        }
++
++        // 2. Retrieve server-configured API Key
++        $api_key = self::get_api_key();
++        if (empty($api_key)) {
++            return new WP_REST_Response(array(
++                'success' => false,
++                'status'  => 'BLOCKED',
++                'error'   => 'AI Inference Gateway is offline pending server configuration. Configure SAHAND_GEMINI_API_KEY in wp-config.php.',
++            ), 503);
++        }
++
++        // 3. Extract and sanitize parameters
++        $prompt   = trim((string) $request->get_param('prompt'));
++        $task     = sanitize_text_field((string) $request->get_param('task'));
++        $language = sanitize_text_field((string) $request->get_param('language'));
++
++        // System instructions based on task and language context
++        $system_instruction = "You are the AI engine powering the SAHAND Personal Technology Hub for Sahand Haghi. "
++            . "Respond with technical precision, engineering rigor, and zero marketing fluff. "
++            . "Context: Task is '{$task}', target language is '{$language}'.";
++
++        $start_time = microtime(true);
++
++        // 4. Dispatch request to Gemini REST API endpoint
++        $endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' . self::DEFAULT_MODEL . ':generateContent?key=' . rawurlencode($api_key);
++
++        $payload = array(
++            'contents' => array(
++                array(
++                    'parts' => array(
++                        array('text' => $prompt),
++                    ),
++                ),
++            ),
++            'systemInstruction' => array(
++                'parts' => array(
++                    array('text' => $system_instruction),
++                ),
++            ),
++        );
++
++        $args = array(
++            'headers' => array(
++                'Content-Type' => 'application/json',
++                'User-Agent'   => 'aistudio-build',
++            ),
++            'body'    => wp_json_encode($payload),
++            'timeout' => 15,
++        );
++
++        $http_response = wp_remote_post($endpoint, $args);
++        $duration_ms = round((microtime(true) - $start_time) * 1000);
++
++        if (is_wp_error($http_response)) {
++            return new WP_REST_Response(array(
++                'success' => false,
++                'error'   => 'AI Gateway communication error: ' . esc_html($http_response->get_error_message()),
++                'latency' => $duration_ms,
++            ), 502);
++        }
++
++        $status_code = wp_remote_retrieve_response_code($http_response);
++        $body = wp_remote_retrieve_body($http_response);
++        $data = json_decode($body, true);
++
++        if ($status_code !== 200) {
++            $error_message = isset($data['error']['message']) ? $data['error']['message'] : 'Inference provider returned HTTP ' . $status_code;
++            return new WP_REST_Response(array(
++                'success' => false,
++                'error'   => 'Upstream AI provider error: ' . esc_html($error_message),
++                'latency' => $duration_ms,
++            ), $status_code >= 400 && $status_code < 500 ? $status_code : 502);
++        }
++
++        // Extract generated text from candidate response parts
++        $candidate_text = '';
++        if (isset($data['candidates'][0]['content']['parts'])) {
++            foreach ($data['candidates'][0]['content']['parts'] as $part) {
++                if (isset($part['text'])) {
++                    $candidate_text .= $part['text'];
++                }
++            }
++        }
++
++        return new WP_REST_Response(array(
++            'success'    => true,
++            'text'       => $candidate_text,
++            'model'      => self::DEFAULT_MODEL,
++            'latency_ms' => $duration_ms,
++            'status'     => 'VERIFIED',
++        ), 200);
++    }
++}
+diff --git a/wordpress/wp-content/plugins/sahand-core/includes/class-meta-fields.php b/wordpress/wp-content/plugins/sahand-core/includes/class-meta-fields.php
+index bde8347..87138a4 100644
+--- a/wordpress/wp-content/plugins/sahand-core/includes/class-meta-fields.php
++++ b/wordpress/wp-content/plugins/sahand-core/includes/class-meta-fields.php
+@@ -1,6 +1,6 @@
+ <?php
+ /**
+- * Custom Meta Boxes & Fields Management
++ * Custom Meta Boxes & Fields Management for All Custom Post Types
+  *
+  * @package SahandCore
+  */
+@@ -15,9 +15,12 @@ class Sahand_Meta_Fields {
+         add_action('add_meta_boxes', array(__CLASS__, 'add_meta_boxes'));
+         add_action('save_post_sahand_project', array(__CLASS__, 'save_project_meta'), 10, 1);
+         add_action('save_post_sahand_product', array(__CLASS__, 'save_product_meta'), 10, 1);
++        add_action('save_post_sahand_ai_tool', array(__CLASS__, 'save_ai_tool_meta'), 10, 1);
++        add_action('save_post_sahand_insight', array(__CLASS__, 'save_insight_meta'), 10, 1);
+     }
+ 
+     public static function add_meta_boxes() {
++        // 1. Project Specifications
+         add_meta_box(
+             'sahand_project_specs',
+             __('Project Engineering Specifications', 'sahand-core'),
+@@ -27,6 +30,7 @@ class Sahand_Meta_Fields {
+             'high'
+         );
+ 
++        // 2. Product Release Specifications
+         add_meta_box(
+             'sahand_product_specs',
+             __('Launchpad Release Specifications', 'sahand-core'),
+@@ -35,8 +39,31 @@ class Sahand_Meta_Fields {
+             'normal',
+             'high'
+         );
++
++        // 3. AI Tool Architecture & Metrics
++        add_meta_box(
++            'sahand_ai_tool_specs',
++            __('AI Tool Architecture & Model Metrics', 'sahand-core'),
++            array(__CLASS__, 'render_ai_tool_specs_box'),
++            'sahand_ai_tool',
++            'normal',
++            'high'
++        );
++
++        // 4. Insight Editorial & Research Metadata
++        add_meta_box(
++            'sahand_insight_specs',
++            __('Research Insight & Academic Metadata', 'sahand-core'),
++            array(__CLASS__, 'render_insight_specs_box'),
++            'sahand_insight',
++            'normal',
++            'high'
++        );
+     }
+ 
++    /**
++     * Render Project Specs Meta Box
++     */
+     public static function render_project_specs_box($post) {
+         wp_nonce_field('sahand_save_project_specs', 'sahand_project_nonce');
+ 
+@@ -86,6 +113,9 @@ class Sahand_Meta_Fields {
+         <?php
+     }
+ 
++    /**
++     * Render Launchpad Product Specs Meta Box
++     */
+     public static function render_product_specs_box($post) {
+         wp_nonce_field('sahand_save_product_specs', 'sahand_product_nonce');
+ 
+@@ -121,6 +151,112 @@ class Sahand_Meta_Fields {
+         <?php
+     }
+ 
++    /**
++     * Render AI Tool Specs Meta Box
++     */
++    public static function render_ai_tool_specs_box($post) {
++        wp_nonce_field('sahand_save_ai_tool_specs', 'sahand_ai_tool_nonce');
++
++        $model      = get_post_meta($post->ID, '_sahand_ai_model', true) ?: 'gemini-3.8-flash';
++        $task       = get_post_meta($post->ID, '_sahand_ai_task', true) ?: 'Reasoning & Inference';
++        $latency    = get_post_meta($post->ID, '_sahand_ai_latency', true) ?: '45ms';
++        $status     = get_post_meta($post->ID, '_sahand_ai_status', true) ?: 'active';
++        $endpoint   = get_post_meta($post->ID, '_sahand_ai_endpoint', true);
++        $parameters = get_post_meta($post->ID, '_sahand_ai_parameters', true);
++        $demo_url   = get_post_meta($post->ID, '_sahand_ai_demo_url', true);
++        ?>
++        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
++          <div>
++            <label for="sahand_ai_model"><strong><?php esc_html_e('Model Architecture:', 'sahand-core'); ?></strong></label><br>
++            <input type="text" name="sahand_ai_model" id="sahand_ai_model" value="<?php echo esc_attr($model); ?>" placeholder="e.g. gemini-3.8-flash" style="width: 100%;">
++          </div>
++          <div>
++            <label for="sahand_ai_task"><strong><?php esc_html_e('Specialized Task / Modality:', 'sahand-core'); ?></strong></label><br>
++            <input type="text" name="sahand_ai_task" id="sahand_ai_task" value="<?php echo esc_attr($task); ?>" placeholder="e.g. Algorithmic Order Routing" style="width: 100%;">
++          </div>
++        </div>
++
++        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
++          <div>
++            <label for="sahand_ai_latency"><strong><?php esc_html_e('Inference Latency:', 'sahand-core'); ?></strong></label><br>
++            <input type="text" name="sahand_ai_latency" id="sahand_ai_latency" value="<?php echo esc_attr($latency); ?>" placeholder="e.g. 35ms p95" style="width: 100%;">
++          </div>
++          <div>
++            <label for="sahand_ai_parameters"><strong><?php esc_html_e('Parameters / Context:', 'sahand-core'); ?></strong></label><br>
++            <input type="text" name="sahand_ai_parameters" id="sahand_ai_parameters" value="<?php echo esc_attr($parameters); ?>" placeholder="e.g. 1M Context Window" style="width: 100%;">
++          </div>
++          <div>
++            <label for="sahand_ai_status"><strong><?php esc_html_e('Operational Status:', 'sahand-core'); ?></strong></label><br>
++            <select name="sahand_ai_status" id="sahand_ai_status" style="width: 100%;">
++              <option value="research" <?php selected($status, 'research'); ?>><?php esc_html_e('Research / Experimental', 'sahand-core'); ?></option>
++              <option value="active" <?php selected($status, 'active'); ?>><?php esc_html_e('Active Production', 'sahand-core'); ?></option>
++              <option value="deprecated" <?php selected($status, 'deprecated'); ?>><?php esc_html_e('Deprecated', 'sahand-core'); ?></option>
++            </select>
++          </div>
++        </div>
++
++        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
++          <div>
++            <label for="sahand_ai_endpoint"><strong><?php esc_html_e('API Gateway Endpoint:', 'sahand-core'); ?></strong></label><br>
++            <input type="text" name="sahand_ai_endpoint" id="sahand_ai_endpoint" value="<?php echo esc_attr($endpoint); ?>" placeholder="/wp-json/sahand/v1/ai/generate" style="width: 100%;">
++          </div>
++          <div>
++            <label for="sahand_ai_demo_url"><strong><?php esc_html_e('Playground / Demo URL:', 'sahand-core'); ?></strong></label><br>
++            <input type="url" name="sahand_ai_demo_url" id="sahand_ai_demo_url" value="<?php echo esc_url($demo_url); ?>" placeholder="https://..." style="width: 100%;">
++          </div>
++        </div>
++        <?php
++    }
++
++    /**
++     * Render Insight Specs Meta Box
++     */
++    public static function render_insight_specs_box($post) {
++        wp_nonce_field('sahand_save_insight_specs', 'sahand_insight_nonce');
++
++        $reading_time  = get_post_meta($post->ID, '_sahand_insight_reading_time', true) ?: '6';
++        $difficulty    = get_post_meta($post->ID, '_sahand_insight_difficulty', true) ?: 'intermediate';
++        $canonical_url = get_post_meta($post->ID, '_sahand_insight_canonical_url', true);
++        $peer_reviewed = get_post_meta($post->ID, '_sahand_insight_peer_reviewed', true) ?: 'no';
++        $key_takeaway  = get_post_meta($post->ID, '_sahand_insight_key_takeaway', true);
++        ?>
++        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
++          <div>
++            <label for="sahand_insight_reading_time"><strong><?php esc_html_e('Reading Time (Minutes):', 'sahand-core'); ?></strong></label><br>
++            <input type="number" name="sahand_insight_reading_time" id="sahand_insight_reading_time" min="1" max="180" value="<?php echo esc_attr($reading_time); ?>" style="width: 100%;">
++          </div>
++          <div>
++            <label for="sahand_insight_difficulty"><strong><?php esc_html_e('Technical Depth:', 'sahand-core'); ?></strong></label><br>
++            <select name="sahand_insight_difficulty" id="sahand_insight_difficulty" style="width: 100%;">
++              <option value="fundamental" <?php selected($difficulty, 'fundamental'); ?>><?php esc_html_e('Fundamental', 'sahand-core'); ?></option>
++              <option value="intermediate" <?php selected($difficulty, 'intermediate'); ?>><?php esc_html_e('Intermediate', 'sahand-core'); ?></option>
++              <option value="advanced" <?php selected($difficulty, 'advanced'); ?>><?php esc_html_e('Advanced / Architectural', 'sahand-core'); ?></option>
++            </select>
++          </div>
++          <div>
++            <label for="sahand_insight_peer_reviewed"><strong><?php esc_html_e('Peer Reviewed / Verified:', 'sahand-core'); ?></strong></label><br>
++            <select name="sahand_insight_peer_reviewed" id="sahand_insight_peer_reviewed" style="width: 100%;">
++              <option value="no" <?php selected($peer_reviewed, 'no'); ?>><?php esc_html_e('No', 'sahand-core'); ?></option>
++              <option value="yes" <?php selected($peer_reviewed, 'yes'); ?>><?php esc_html_e('Yes', 'sahand-core'); ?></option>
++            </select>
++          </div>
++        </div>
++
++        <div style="margin-bottom: 1rem;">
++          <label for="sahand_insight_canonical_url"><strong><?php esc_html_e('External Canonical URL (if syndicated):', 'sahand-core'); ?></strong></label><br>
++          <input type="url" name="sahand_insight_canonical_url" id="sahand_insight_canonical_url" value="<?php echo esc_url($canonical_url); ?>" placeholder="https://..." style="width: 100%;">
++        </div>
++
++        <div>
++          <label for="sahand_insight_key_takeaway"><strong><?php esc_html_e('Core Architectural Takeaway / Thesis:', 'sahand-core'); ?></strong></label><br>
++          <textarea name="sahand_insight_key_takeaway" id="sahand_insight_key_takeaway" rows="3" style="width: 100%;"><?php echo esc_textarea($key_takeaway); ?></textarea>
++        </div>
++        <?php
++    }
++
++    /**
++     * Save Project Meta
++     */
+     public static function save_project_meta($post_id) {
+         if ('sahand_project' !== get_post_type($post_id) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
+             return;
+@@ -159,6 +295,9 @@ class Sahand_Meta_Fields {
+         }
+     }
+ 
++    /**
++     * Save Product Meta
++     */
+     public static function save_product_meta($post_id) {
+         if ('sahand_product' !== get_post_type($post_id) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
+             return;
+@@ -190,4 +329,86 @@ class Sahand_Meta_Fields {
+             update_post_meta($post_id, '_sahand_product_changelog', sanitize_textarea_field(wp_unslash($_POST['sahand_product_changelog'])));
+         }
+     }
++
++    /**
++     * Save AI Tool Meta
++     */
++    public static function save_ai_tool_meta($post_id) {
++        if ('sahand_ai_tool' !== get_post_type($post_id) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
++            return;
++        }
++
++        if (!Sahand_Security::verify_authorized_action('sahand_ai_tool_nonce', 'sahand_save_ai_tool_specs', 'edit_post', $post_id)) {
++            return;
++        }
++
++        if (isset($_POST['sahand_ai_model'])) {
++            update_post_meta($post_id, '_sahand_ai_model', sanitize_text_field(wp_unslash($_POST['sahand_ai_model'])));
++        }
++
++        if (isset($_POST['sahand_ai_task'])) {
++            update_post_meta($post_id, '_sahand_ai_task', sanitize_text_field(wp_unslash($_POST['sahand_ai_task'])));
++        }
++
++        if (isset($_POST['sahand_ai_latency'])) {
++            update_post_meta($post_id, '_sahand_ai_latency', sanitize_text_field(wp_unslash($_POST['sahand_ai_latency'])));
++        }
++
++        if (isset($_POST['sahand_ai_parameters'])) {
++            update_post_meta($post_id, '_sahand_ai_parameters', sanitize_text_field(wp_unslash($_POST['sahand_ai_parameters'])));
++        }
++
++        if (isset($_POST['sahand_ai_status'])) {
++            $status = sanitize_text_field(wp_unslash($_POST['sahand_ai_status']));
++            if (in_array($status, array('research', 'active', 'deprecated'), true)) {
++                update_post_meta($post_id, '_sahand_ai_status', $status);
++            }
++        }
++
++        if (isset($_POST['sahand_ai_endpoint'])) {
++            update_post_meta($post_id, '_sahand_ai_endpoint', sanitize_text_field(wp_unslash($_POST['sahand_ai_endpoint'])));
++        }
++
++        if (isset($_POST['sahand_ai_demo_url'])) {
++            update_post_meta($post_id, '_sahand_ai_demo_url', esc_url_raw(wp_unslash($_POST['sahand_ai_demo_url'])));
++        }
++    }
++
++    /**
++     * Save Insight Meta
++     */
++    public static function save_insight_meta($post_id) {
++        if ('sahand_insight' !== get_post_type($post_id) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
++            return;
++        }
++
++        if (!Sahand_Security::verify_authorized_action('sahand_insight_nonce', 'sahand_save_insight_specs', 'edit_post', $post_id)) {
++            return;
++        }
++
++        if (isset($_POST['sahand_insight_reading_time'])) {
++            $reading_time = absint($_POST['sahand_insight_reading_time']);
++            update_post_meta($post_id, '_sahand_insight_reading_time', $reading_time ?: 5);
++        }
++
++        if (isset($_POST['sahand_insight_difficulty'])) {
++            $diff = sanitize_text_field(wp_unslash($_POST['sahand_insight_difficulty']));
++            if (in_array($diff, array('fundamental', 'intermediate', 'advanced'), true)) {
++                update_post_meta($post_id, '_sahand_insight_difficulty', $diff);
++            }
++        }
++
++        if (isset($_POST['sahand_insight_peer_reviewed'])) {
++            $peer = sanitize_text_field(wp_unslash($_POST['sahand_insight_peer_reviewed']));
++            update_post_meta($post_id, '_sahand_insight_peer_reviewed', ('yes' === $peer) ? 'yes' : 'no');
++        }
++
++        if (isset($_POST['sahand_insight_canonical_url'])) {
++            update_post_meta($post_id, '_sahand_insight_canonical_url', esc_url_raw(wp_unslash($_POST['sahand_insight_canonical_url'])));
++        }
++
++        if (isset($_POST['sahand_insight_key_takeaway'])) {
++            update_post_meta($post_id, '_sahand_insight_key_takeaway', sanitize_textarea_field(wp_unslash($_POST['sahand_insight_key_takeaway'])));
++        }
++    }
+ }
+diff --git a/wordpress/wp-content/plugins/sahand-core/includes/class-rest-api.php b/wordpress/wp-content/plugins/sahand-core/includes/class-rest-api.php
+index 92e7875..81c24cd 100644
+--- a/wordpress/wp-content/plugins/sahand-core/includes/class-rest-api.php
++++ b/wordpress/wp-content/plugins/sahand-core/includes/class-rest-api.php
+@@ -1,6 +1,6 @@
+ <?php
+ /**
+- * REST API Controller with Security Controls
++ * REST API Ingress & Controller
+  *
+  * @package SahandCore
+  */
+@@ -18,12 +18,14 @@ class Sahand_REST_API {
+     }
+ 
+     public static function register_routes() {
++        // 1. System Health Telemetry (Zero Fingerprinting)
+         register_rest_route(self::NAMESPACE, '/health', array(
+             'methods'             => WP_REST_Server::READABLE,
+             'callback'            => array(__CLASS__, 'get_health_status'),
+             'permission_callback' => '__return_true',
+         ));
+ 
++        // 2. Public Projects Query Endpoint
+         register_rest_route(self::NAMESPACE, '/projects', array(
+             'methods'             => WP_REST_Server::READABLE,
+             'callback'            => array(__CLASS__, 'get_projects'),
+@@ -31,13 +33,45 @@ class Sahand_REST_API {
+             'args'                => array(
+                 'lang' => array(
+                     'required'          => false,
++                    'type'              => 'string',
++                    'default'           => 'fa',
+                     'sanitize_callback' => 'sanitize_text_field',
++                    'validate_callback' => array(__CLASS__, 'validate_language'),
++                ),
++            ),
++        ));
++
++        // 3. Public Products (Launchpad) Query Endpoint
++        register_rest_route(self::NAMESPACE, '/products', array(
++            'methods'             => WP_REST_Server::READABLE,
++            'callback'            => array(__CLASS__, 'get_products'),
++            'permission_callback' => '__return_true',
++            'args'                => array(
++                'lang' => array(
++                    'required'          => false,
++                    'type'              => 'string',
+                     'default'           => 'fa',
++                    'sanitize_callback' => 'sanitize_text_field',
+                     'validate_callback' => array(__CLASS__, 'validate_language'),
+                 ),
+             ),
+         ));
+ 
++        // 4. Public AI Tools Query Endpoint
++        register_rest_route(self::NAMESPACE, '/ai-tools', array(
++            'methods'             => WP_REST_Server::READABLE,
++            'callback'            => array(__CLASS__, 'get_ai_tools'),
++            'permission_callback' => '__return_true',
++        ));
++
++        // 5. Public Insights Query Endpoint
++        register_rest_route(self::NAMESPACE, '/insights', array(
++            'methods'             => WP_REST_Server::READABLE,
++            'callback'            => array(__CLASS__, 'get_insights'),
++            'permission_callback' => '__return_true',
++        ));
++
++        // 6. Secure Contact Form Ingress Endpoint
+         register_rest_route(self::NAMESPACE, '/contact', array(
+             'methods'             => WP_REST_Server::CREATABLE,
+             'callback'            => array(__CLASS__, 'handle_contact_submission'),
+@@ -53,6 +87,7 @@ class Sahand_REST_API {
+                     'required'          => true,
+                     'type'              => 'string',
+                     'format'            => 'email',
++                    'maxLength'         => 120,
+                     'sanitize_callback' => 'sanitize_email',
+                 ),
+                 'message' => array(
+@@ -66,6 +101,12 @@ class Sahand_REST_API {
+                     'type'              => 'string',
+                     'sanitize_callback' => 'sanitize_text_field',
+                 ),
++                '_sahand_hp' => array(
++                    'required'          => false,
++                    'type'              => 'string',
++                    'default'           => '',
++                    'sanitize_callback' => 'sanitize_text_field',
++                ),
+             ),
+         ));
+     }
+@@ -82,10 +123,12 @@ class Sahand_REST_API {
+     }
+ 
+     public static function get_projects($request) {
++        $lang = $request->get_param('lang') ?: 'fa';
++
+         $query_args = array(
+             'post_type'      => 'sahand_project',
+             'post_status'    => 'publish',
+-            'posts_per_page' => 12,
++            'posts_per_page' => 50,
+             'orderby'        => 'date',
+             'order'          => 'DESC',
+         );
+@@ -112,17 +155,123 @@ class Sahand_REST_API {
+             wp_reset_postdata();
+         }
+ 
+-        return new WP_REST_Response(array('success' => true, 'data' => $projects), 200);
++        return new WP_REST_Response($projects, 200);
++    }
++
++    public static function get_products($request) {
++        $query_args = array(
++            'post_type'      => 'sahand_product',
++            'post_status'    => 'publish',
++            'posts_per_page' => 50,
++            'orderby'        => 'date',
++            'order'          => 'DESC',
++        );
++
++        $query = new WP_Query($query_args);
++        $products = array();
++
++        if ($query->have_posts()) {
++            while ($query->have_posts()) {
++                $query->the_post();
++                $id = get_the_ID();
++                $products[] = array(
++                    'id'           => $id,
++                    'title'        => get_the_title(),
++                    'slug'         => get_post_field('post_name', $id),
++                    'excerpt'      => get_the_excerpt(),
++                    'version'      => sanitize_text_field(get_post_meta($id, '_sahand_product_version', true)),
++                    'status'       => sanitize_text_field(get_post_meta($id, '_sahand_product_status', true)),
++                    'download_url' => esc_url_raw(get_post_meta($id, '_sahand_product_download_url', true)),
++                    'permalink'    => get_permalink($id),
++                );
++            }
++            wp_reset_postdata();
++        }
++
++        return new WP_REST_Response($products, 200);
++    }
++
++    public static function get_ai_tools() {
++        $query = new WP_Query(array(
++            'post_type'      => 'sahand_ai_tool',
++            'post_status'    => 'publish',
++            'posts_per_page' => 20,
++        ));
++
++        $tools = array();
++        if ($query->have_posts()) {
++            while ($query->have_posts()) {
++                $query->the_post();
++                $id = get_the_ID();
++                $tools[] = array(
++                    'id'         => $id,
++                    'title'      => get_the_title(),
++                    'model'      => sanitize_text_field(get_post_meta($id, '_sahand_ai_model', true)),
++                    'task'       => sanitize_text_field(get_post_meta($id, '_sahand_ai_task', true)),
++                    'latency'    => sanitize_text_field(get_post_meta($id, '_sahand_ai_latency', true)),
++                    'status'     => sanitize_text_field(get_post_meta($id, '_sahand_ai_status', true)),
++                    'endpoint'   => sanitize_text_field(get_post_meta($id, '_sahand_ai_endpoint', true)),
++                    'demo_url'   => esc_url_raw(get_post_meta($id, '_sahand_ai_demo_url', true)),
++                );
++            }
++            wp_reset_postdata();
++        }
++
++        return new WP_REST_Response($tools, 200);
++    }
++
++    public static function get_insights() {
++        $query = new WP_Query(array(
++            'post_type'      => 'sahand_insight',
++            'post_status'    => 'publish',
++            'posts_per_page' => 20,
++        ));
++
++        $insights = array();
++        if ($query->have_posts()) {
++            while ($query->have_posts()) {
++                $query->the_post();
++                $id = get_the_ID();
++                $insights[] = array(
++                    'id'           => $id,
++                    'title'        => get_the_title(),
++                    'slug'         => get_post_field('post_name', $id),
++                    'reading_time' => (int) get_post_meta($id, '_sahand_insight_reading_time', true),
++                    'difficulty'   => sanitize_text_field(get_post_meta($id, '_sahand_insight_difficulty', true)),
++                    'takeaway'     => sanitize_textarea_field(get_post_meta($id, '_sahand_insight_key_takeaway', true)),
++                    'permalink'    => get_permalink($id),
++                );
++            }
++            wp_reset_postdata();
++        }
++
++        return new WP_REST_Response($insights, 200);
+     }
+ 
+     public static function handle_contact_submission($request) {
+-        if (!Sahand_Security::check_rate_limit('contact_form', 5, 600)) {
+-            return new WP_REST_Response(array(
+-                'success' => false,
+-                'message' => 'Rate limit exceeded. Please wait before submitting another message.',
++        // 1. Enforce Atomic Rate Limiting: max 5 submissions per 10 minutes
++        $rate_check = Sahand_Security::check_rate_limit('contact_form', 5, 600);
++        if (!$rate_check['allowed']) {
++            $response = new WP_REST_Response(array(
++                'success'     => false,
++                'message'     => 'Too many contact requests from this address. Please wait before retrying.',
++                'retry_after' => $rate_check['retry_after'],
+             ), 429);
++            $response->header('Retry-After', (string) $rate_check['retry_after']);
++            return $response;
++        }
++
++        // 2. Anti-Spam Honeypot Verification
++        $honeypot = (string) $request->get_param('_sahand_hp');
++        if (!empty($honeypot)) {
++            // Silently discard automated spam submissions
++            return new WP_REST_Response(array(
++                'success' => true,
++                'message' => 'Your message has been delivered.',
++            ), 200);
+         }
+ 
++        // 3. Verify Nonce
+         $nonce = $request->get_param('_wpnonce');
+         if (!is_string($nonce) || !wp_verify_nonce($nonce, 'sahand_contact_nonce')) {
+             return new WP_REST_Response(array(
+@@ -135,13 +284,14 @@ class Sahand_REST_API {
+         $email   = sanitize_email((string) $request->get_param('email'));
+         $message = sanitize_textarea_field((string) $request->get_param('message'));
+ 
+-        if ('' === trim($name) || !is_email($email) || '' === trim($message)) {
++        if ('' === trim($name) || !is_email($email) || '' === trim($message) || mb_strlen(trim($message)) < 5) {
+             return new WP_REST_Response(array(
+                 'success' => false,
+-                'message' => 'Please provide a valid name, email address, and message.',
++                'message' => 'Please provide a valid name, email address, and a message of at least 5 characters.',
+             ), 400);
+         }
+ 
++        // 4. Validate Admin Recipient Configuration
+         $admin_email = sanitize_email(get_option('admin_email'));
+         if (!is_email($admin_email)) {
+             return new WP_REST_Response(array(
+@@ -157,6 +307,7 @@ class Sahand_REST_API {
+         );
+         $body = "Name: {$name}\nEmail: {$email}\n\nMessage:\n{$message}";
+ 
++        // 5. Send Email and Check Delivery Return Status
+         $sent = wp_mail($admin_email, $subject, $body, $headers);
+         if (!$sent) {
+             return new WP_REST_Response(array(
+-- 
+2.34.1
+

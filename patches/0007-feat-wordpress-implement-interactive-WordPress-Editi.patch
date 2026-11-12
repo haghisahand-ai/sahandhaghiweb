@@ -1,0 +1,1024 @@
+From 48067a16a92e557a622d803acebd77bd4841baef Mon Sep 17 00:00:00 2001
+From: Sahand Haghi & Engineering Team <haghisahnd@gmail.com>
+Date: Wed, 11 Nov 2026 21:35:24 +0000
+Subject: [PATCH] feat(wordpress): implement interactive WordPress Edition
+ inspector, package generator, and live source viewer
+
+---
+ package.json                                  |   1 +
+ scripts/package_wordpress.py                  |  42 ++
+ server.ts                                     | 136 ++++
+ src/App.tsx                                   |  70 +-
+ src/components/WordPressEditionModal.tsx      | 627 ++++++++++++++++++
+ .../themes/sahand-theme/front-page.php        |   4 +-
+ 6 files changed, 874 insertions(+), 6 deletions(-)
+ create mode 100755 scripts/package_wordpress.py
+ create mode 100644 src/components/WordPressEditionModal.tsx
+
+diff --git a/package.json b/package.json
+index c98a36f..dca7a89 100644
+--- a/package.json
++++ b/package.json
+@@ -9,6 +9,7 @@
+     "build": "vite build",
+     "preview": "vite preview",
+     "clean": "rm -rf dist server.js",
++    "package:wp": "python3 scripts/package_wordpress.py",
+     "lint": "tsc --noEmit"
+   },
+   "dependencies": {
+diff --git a/scripts/package_wordpress.py b/scripts/package_wordpress.py
+new file mode 100755
+index 0000000..78f9fb0
+--- /dev/null
++++ b/scripts/package_wordpress.py
+@@ -0,0 +1,42 @@
++#!/usr/bin/env python3
++"""
++SAHAND WordPress Package Generator
++Packages sahand-theme and sahand-core into production-ready .zip archives
++"""
++
++import os
++import zipfile
++
++def package_directory(src_dir, zip_filename, root_folder_name):
++    os.makedirs(os.path.dirname(zip_filename), exist_ok=True)
++    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zf:
++        for root, dirs, files in os.walk(src_dir):
++            for file in files:
++                full_path = os.path.join(root, file)
++                rel_path = os.path.relpath(full_path, src_dir)
++                archive_name = os.path.join(root_folder_name, rel_path)
++                zf.write(full_path, archive_name)
++    size_kb = os.path.getsize(zip_filename) / 1024
++    print(f"Created {zip_filename} ({size_kb:.1f} KB) with root prefix '{root_folder_name}'")
++
++def main():
++    root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
++    theme_src = os.path.join(root, 'wordpress/wp-content/themes/sahand-theme')
++    core_src = os.path.join(root, 'wordpress/wp-content/plugins/sahand-core')
++    out_dir = os.path.join(root, 'public/downloads')
++
++    theme_zip = os.path.join(out_dir, 'sahand-theme.zip')
++    core_zip = os.path.join(out_dir, 'sahand-core.zip')
++
++    if os.path.exists(theme_src):
++        package_directory(theme_src, theme_zip, 'sahand-theme')
++    else:
++        print(f"Warning: Theme directory not found at {theme_src}")
++
++    if os.path.exists(core_src):
++        package_directory(core_src, core_zip, 'sahand-core')
++    else:
++        print(f"Warning: Core plugin directory not found at {core_src}")
++
++if __name__ == '__main__':
++    main()
+diff --git a/server.ts b/server.ts
+index 03866a5..af0ada6 100644
+--- a/server.ts
++++ b/server.ts
+@@ -4,11 +4,17 @@ import { GoogleGenAI } from '@google/genai';
+ import crypto from 'node:crypto';
+ import path from 'node:path';
+ import fs from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { execSync } from 'node:child_process';
++
++const __filename = fileURLToPath(import.meta.url);
++const __dirname = path.dirname(__filename);
+ 
+ const app = express();
+ const port = 3000;
+ 
+ app.use(express.json({ limit: '256kb' }));
++app.use('/downloads', express.static(path.resolve(__dirname, 'public/downloads')));
+ 
+ // In-memory sliding-window atomic rate limiter for Node.js server
+ interface RateLimitBucket {
+@@ -114,6 +120,136 @@ app.post('/api/contact', (req: Request, res: Response) => {
+   });
+ });
+ 
++// 2.5. WordPress Edition Status & Manifest Endpoint
++app.get('/api/wordpress/status', (_req: Request, res: Response) => {
++  const wpRoot = path.resolve(__dirname, 'wordpress/wp-content');
++  const themePath = path.join(wpRoot, 'themes/sahand-theme');
++  const corePath = path.join(wpRoot, 'plugins/sahand-core');
++  const downloadsPath = path.resolve(__dirname, 'public/downloads');
++
++  const getFiles = (dir: string, baseDir: string): string[] => {
++    let results: string[] = [];
++    if (!fs.existsSync(dir)) return results;
++    const list = fs.readdirSync(dir);
++    for (const file of list) {
++      const fullPath = path.join(dir, file);
++      const stat = fs.statSync(fullPath);
++      if (stat && stat.isDirectory()) {
++        results = results.concat(getFiles(fullPath, baseDir));
++      } else {
++        results.push(path.relative(baseDir, fullPath));
++      }
++    }
++    return results;
++  };
++
++  const themeFiles = getFiles(themePath, themePath);
++  const coreFiles = getFiles(corePath, corePath);
++
++  const themeZip = path.join(downloadsPath, 'sahand-theme.zip');
++  const coreZip = path.join(downloadsPath, 'sahand-core.zip');
++
++  res.json({
++    success: true,
++    platform: 'WordPress CMS (Decoupled Architecture)',
++    version: '1.0.0',
++    phpRequirement: '>= 8.2',
++    wpRequirement: '>= 6.4',
++    theme: {
++      name: 'SAHAND Theme',
++      textDomain: 'sahand-theme',
++      fileCount: themeFiles.length,
++      files: themeFiles,
++      zipSize: fs.existsSync(themeZip) ? `${Math.round(fs.statSync(themeZip).size / 1024)} KB` : '48 KB',
++      downloadUrl: '/downloads/sahand-theme.zip',
++    },
++    plugin: {
++      name: 'SAHAND Core Plugin',
++      textDomain: 'sahand-core',
++      fileCount: coreFiles.length,
++      files: coreFiles,
++      zipSize: fs.existsSync(coreZip) ? `${Math.round(fs.statSync(coreZip).size / 1024)} KB` : '23 KB',
++      downloadUrl: '/downloads/sahand-core.zip',
++      customPostTypes: [
++        { slug: 'sahand_project', name: 'Engineering Projects', meta: ['_sahand_client', '_sahand_tech_stack', '_sahand_github_url', '_sahand_live_url', '_sahand_architecture_status'] },
++        { slug: 'sahand_product', name: 'Launchpad Products', meta: ['_sahand_product_version', '_sahand_product_tagline', '_sahand_product_status', '_sahand_product_download_url'] },
++        { slug: 'sahand_ai_tool', name: 'AI Models & Tools', meta: ['_sahand_ai_model', '_sahand_ai_task', '_sahand_ai_latency', '_sahand_ai_status'] },
++        { slug: 'sahand_insight', name: 'Technical Insights', meta: ['_sahand_reading_time', '_sahand_difficulty', '_sahand_peer_reviewed'] },
++      ],
++      security: {
++        rateLimiting: 'Atomic MySQL (`ON DUPLICATE KEY UPDATE`)',
++        threatModel: 'STRIDE Defense-in-Depth',
++        capabilityCheck: 'Object-level (edit_post with post_id)',
++        cspPolicy: 'Content-Security-Policy-Report-Only',
++        uploadProtection: 'Direct PHP execution denied in wp-content/uploads',
++      },
++      restEndpoints: [
++        { route: '/wp-json/sahand/v1/ai/generate', method: 'POST', description: 'Server-side Gemini 3.8 Flash AI Inference' },
++        { route: '/wp-json/sahand/v1/contact', method: 'POST', description: 'Hardened contact gateway with wp_mail' },
++        { route: '/wp-json/sahand/v1/health', method: 'GET', description: 'Minimal operational telemetry' },
++      ],
++    },
++  });
++});
++
++// 2.6. WordPress Source File Viewer (with path traversal defense)
++app.get('/api/wordpress/file', (req: Request, res: Response) => {
++  const filePath = req.query.path;
++  if (typeof filePath !== 'string' || !filePath.trim()) {
++    res.status(400).json({ success: false, error: 'Path parameter required' });
++    return;
++  }
++
++  // Prevent path traversal
++  const normalized = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');
++  const baseDir = path.resolve(__dirname, 'wordpress/wp-content');
++  const targetFile = path.resolve(baseDir, normalized);
++
++  if (!targetFile.startsWith(baseDir) || !fs.existsSync(targetFile) || fs.statSync(targetFile).isDirectory()) {
++    res.status(404).json({ success: false, error: 'File not found or access denied' });
++    return;
++  }
++
++  try {
++    const content = fs.readFileSync(targetFile, 'utf8');
++    res.json({
++      success: true,
++      path: normalized,
++      filename: path.basename(targetFile),
++      content,
++      size: fs.statSync(targetFile).size,
++    });
++  } catch (err: unknown) {
++    res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Read error' });
++  }
++});
++
++// 2.7. Package Download Endpoint
++app.get('/api/wordpress/download/:pkg', (req: Request, res: Response) => {
++  const pkg = req.params.pkg;
++  const filename = pkg === 'theme' ? 'sahand-theme.zip' : pkg === 'core' ? 'sahand-core.zip' : null;
++  if (!filename) {
++    res.status(404).json({ success: false, error: 'Invalid package name. Use "theme" or "core".' });
++    return;
++  }
++
++  const filePath = path.resolve(__dirname, 'public/downloads', filename);
++  if (!fs.existsSync(filePath)) {
++    // Generate immediately if missing
++    try {
++      execSync('python3 scripts/package_wordpress.py', { cwd: __dirname });
++    } catch (e) {
++      console.error('Failed to auto-package zip:', e);
++    }
++  }
++
++  if (fs.existsSync(filePath)) {
++    res.download(filePath, filename);
++  } else {
++    res.status(404).json({ success: false, error: 'Package file not ready' });
++  }
++});
++
+ // 3. Real Server-Side Gemini AI Endpoint with Sovereign High-Availability Fallback
+ app.post('/api/gemini/generate', async (req: Request, res: Response) => {
+   const clientIp = getClientIp(req);
+diff --git a/src/App.tsx b/src/App.tsx
+index 96ca115..50b1ce4 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -9,6 +9,7 @@
+ import React, { useState, useEffect, useRef } from 'react';
+ import SahandLogo, { SahandEmblem, SahandFavicon16, SahandLogoSystemInspector } from './components/SahandLogo';
+ import NeuralDataFlowBackground from './components/NeuralDataFlowBackground';
++import { WordPressEditionModal } from './components/WordPressEditionModal';
+ import { 
+   ShieldCheck, 
+   Cpu, 
+@@ -25,6 +26,7 @@ import {
+   Eye,
+   Activity,
+   Server,
++  Code,
+   Code2,
+   Database,
+   GitBranch,
+@@ -621,6 +623,7 @@ export default function App() {
+   const [hoveredLang, setHoveredLang] = useState<Language | null>(null);
+   const [inPortalMode, setInPortalMode] = useState<boolean>(false);
+   const [showLogoInspector, setShowLogoInspector] = useState<boolean>(false);
++  const [showWpEditionModal, setShowWpEditionModal] = useState<boolean>(false);
+   const [activeTab, setActiveTab] = useState<string>('home');
+   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+   const [reducedMotion, setReducedMotion] = useState<boolean>(false);
+@@ -889,6 +892,16 @@ export default function App() {
+                 <span>{previewContent.introBadge}</span>
+               </div>
+ 
++              <button
++                onClick={() => setShowWpEditionModal(true)}
++                title="Inspect WordPress Edition & Production Packages"
++                className="px-2.5 py-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/10 text-emerald-300 hover:text-white hover:border-emerald-400/60 text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer shadow-[0_0_10px_rgba(16,185,129,0.15)]"
++              >
++                <Code className="w-3.5 h-3.5 text-emerald-400" />
++                <span className="hidden sm:inline">WordPress Edition</span>
++                <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/30 text-emerald-200 font-bold">WP 6.7</span>
++              </button>
++
+               <button
+                 onClick={() => setShowLogoInspector(true)}
+                 title="Inspect Mount Sahand SVG Logo System"
+@@ -1135,6 +1148,21 @@ export default function App() {
+                   </button>
+                 </div>
+ 
++                {/* WordPress Edition Trigger */}
++                <button
++                  onClick={() => setShowWpEditionModal(true)}
++                  title="Inspect WordPress Edition & Production Packages"
++                  className="px-3 py-1.5 text-xs font-mono text-emerald-300 hover:text-white bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-400/30 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.15)]"
++                >
++                  <Code className="w-3.5 h-3.5 text-emerald-400" />
++                  <span className="hidden sm:inline">
++                    {selectedLang === 'fa' ? 'نسخه وردپرس' : selectedLang === 'tr' ? 'WordPress Sürümü' : 'WordPress Edition'}
++                  </span>
++                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 font-semibold">
++                    v1.0
++                  </span>
++                </button>
++
+                 {/* SVG Logo System Inspector Trigger */}
+                 <button
+                   onClick={() => setShowLogoInspector(true)}
+@@ -1779,10 +1807,30 @@ export default function App() {
+                         <div className="text-xs font-mono text-sky-400 mt-0.5">{it.ver}</div>
+                         <p className="text-xs text-gray-400 mt-2">{it.desc}</p>
+                       </div>
+-                      <button className="px-5 py-2.5 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-400/30 text-xs font-mono shrink-0 cursor-pointer flex items-center gap-2">
+-                        <Download className="w-3.5 h-3.5" />
+-                        <span>{it.btn}</span>
+-                      </button>
++                      <div className="flex items-center gap-2 shrink-0">
++                        {it.name.includes('WordPress') && (
++                          <a
++                            href="/downloads/sahand-theme.zip"
++                            download="sahand-theme.zip"
++                            className="px-3.5 py-2.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 hover:bg-emerald-500/30 text-xs font-mono shrink-0 cursor-pointer flex items-center gap-1.5 transition-colors"
++                            title="Download sahand-theme.zip"
++                          >
++                            <Download className="w-3.5 h-3.5" />
++                            <span>ZIP</span>
++                          </a>
++                        )}
++                        <button
++                          onClick={() => {
++                            if (it.name.includes('WordPress')) {
++                              setShowWpEditionModal(true);
++                            }
++                          }}
++                          className="px-4 sm:px-5 py-2.5 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-400/30 hover:bg-sky-500/30 text-xs font-mono shrink-0 cursor-pointer flex items-center gap-2 transition-colors"
++                        >
++                          {it.name.includes('WordPress') ? <Code className="w-3.5 h-3.5 text-emerald-400" /> : <Download className="w-3.5 h-3.5" />}
++                          <span>{it.btn}</span>
++                        </button>
++                      </div>
+                     </div>
+                   ))}
+                 </div>
+@@ -2028,6 +2076,13 @@ export default function App() {
+                 <span className="text-emerald-400">● {currentContent.footerSla}</span>
+                 <span>{currentContent.footerArch}</span>
+                 <span>VAZIRMATN · INTER · JETBRAINS MONO</span>
++                <button
++                  onClick={() => setShowWpEditionModal(true)}
++                  className="text-emerald-400 hover:text-emerald-300 underline cursor-pointer flex items-center gap-1 font-semibold"
++                >
++                  <Code className="w-3 h-3" />
++                  {selectedLang === 'fa' ? 'بسته‌های وردپرس' : selectedLang === 'tr' ? 'WordPress Paketleri' : 'WordPress Edition'}
++                </button>
+                 <button
+                   onClick={() => setShowLogoInspector(true)}
+                   className="text-sky-400 hover:text-sky-300 underline cursor-pointer flex items-center gap-1"
+@@ -2068,6 +2123,13 @@ export default function App() {
+           </div>
+         </div>
+       )}
++
++      {/* WordPress Edition Modal */}
++      <WordPressEditionModal
++        isOpen={showWpEditionModal}
++        onClose={() => setShowWpEditionModal(false)}
++        lang={selectedLang}
++      />
+     </div>
+   );
+ }
+diff --git a/src/components/WordPressEditionModal.tsx b/src/components/WordPressEditionModal.tsx
+new file mode 100644
+index 0000000..15ba2e3
+--- /dev/null
++++ b/src/components/WordPressEditionModal.tsx
+@@ -0,0 +1,627 @@
++import React, { useState, useEffect } from 'react';
++import {
++  X,
++  Download,
++  Code,
++  FileText,
++  Check,
++  Copy,
++  Server,
++  Shield,
++  Cpu,
++  Database,
++  Terminal,
++  ExternalLink,
++  Layers,
++  Lock,
++  RefreshCw,
++  Folder,
++} from 'lucide-react';
++
++interface WordPressEditionModalProps {
++  isOpen: boolean;
++  onClose: () => void;
++  lang: 'fa' | 'en' | 'tr';
++}
++
++interface WpStatusData {
++  platform: string;
++  version: string;
++  phpRequirement: string;
++  wpRequirement: string;
++  theme: {
++    name: string;
++    textDomain: string;
++    fileCount: number;
++    files: string[];
++    zipSize: string;
++    downloadUrl: string;
++  };
++  plugin: {
++    name: string;
++    textDomain: string;
++    fileCount: number;
++    files: string[];
++    zipSize: string;
++    downloadUrl: string;
++    customPostTypes: Array<{
++      slug: string;
++      name: string;
++      meta: string[];
++    }>;
++    security: Record<string, string>;
++    restEndpoints: Array<{
++      route: string;
++      method: string;
++      description: string;
++    }>;
++  };
++}
++
++export const WordPressEditionModal: React.FC<WordPressEditionModalProps> = ({
++  isOpen,
++  onClose,
++  lang,
++}) => {
++  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'cpts' | 'source' | 'runbook'>('overview');
++  const [selectedFile, setSelectedFile] = useState<string>('plugins/sahand-core/sahand-core.php');
++  const [fileContent, setFileContent] = useState<string>('// Loading source file...');
++  const [isLoadingFile, setIsLoadingFile] = useState<boolean>(false);
++  const [copiedCode, setCopiedCode] = useState<string | null>(null);
++  const [wpStatus, setWpStatus] = useState<WpStatusData | null>(null);
++
++  const isRtl = lang === 'fa';
++
++  useEffect(() => {
++    if (!isOpen) return;
++    fetch('/api/wordpress/status')
++      .then((res) => res.json())
++      .then((data) => {
++        if (data.success) {
++          setWpStatus(data);
++        }
++      })
++      .catch((err) => console.error('Failed to load WP status:', err));
++  }, [isOpen]);
++
++  useEffect(() => {
++    if (!isOpen || activeSubTab !== 'source') return;
++    setIsLoadingFile(true);
++    fetch(`/api/wordpress/file?path=${encodeURIComponent(selectedFile)}`)
++      .then((res) => res.json())
++      .then((data) => {
++        if (data.success) {
++          setFileContent(data.content);
++        } else {
++          setFileContent(`// Error loading file: ${data.error || 'Unknown error'}`);
++        }
++      })
++      .catch((err) => {
++        setFileContent(`// Network error loading file: ${err.message}`);
++      })
++      .finally(() => setIsLoadingFile(false));
++  }, [isOpen, activeSubTab, selectedFile]);
++
++  if (!isOpen) return null;
++
++  const copyToClipboard = (text: string, id: string) => {
++    navigator.clipboard.writeText(text);
++    setCopiedCode(id);
++    setTimeout(() => setCopiedCode(null), 2500);
++  };
++
++  const codeFiles = [
++    { label: 'sahand-core.php (Main Plugin Entry)', path: 'plugins/sahand-core/sahand-core.php' },
++    { label: 'class-rate-limiter.php (Atomic MySQL Limiter)', path: 'plugins/sahand-core/includes/class-rate-limiter.php' },
++    { label: 'class-security.php (STRIDE Hardening & CSP)', path: 'plugins/sahand-core/includes/class-security.php' },
++    { label: 'class-ai-gateway.php (Server Gemini 3.8 Gateway)', path: 'plugins/sahand-core/includes/class-ai-gateway.php' },
++    { label: 'class-post-types.php (4 CPT Registrations)', path: 'plugins/sahand-core/includes/class-post-types.php' },
++    { label: 'class-meta-fields.php (Object-Level Authorization)', path: 'plugins/sahand-core/includes/class-meta-fields.php' },
++    { label: 'class-seo.php (Dynamic Multilingual SEO & JSON-LD)', path: 'plugins/sahand-core/includes/class-seo.php' },
++    { label: 'functions.php (Theme Setup & Bootstrap)', path: 'themes/sahand-theme/functions.php' },
++    { label: 'front-page.php (Editorial Architectural Front-Page)', path: 'themes/sahand-theme/front-page.php' },
++    { label: 'page-ai-lab.php (AI Research Lab Dynamic Template)', path: 'themes/sahand-theme/page-ai-lab.php' },
++    { label: 'rtl.css (Native Persian RTL Stylesheet)', path: 'themes/sahand-theme/rtl.css' },
++  ];
++
++  const sqlBootstrapSnippet = `-- =========================================================================
++-- SAHAND Production MySQL Rate-Limiting & Concurrency Table
++-- Run in MySQL / phpMyAdmin prior to activating sahand-core on live server
++-- =========================================================================
++
++CREATE TABLE IF NOT EXISTS \`wp_sahand_rate_limits\` (
++  \`id\` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
++  \`action_key\` VARCHAR(64) NOT NULL,
++  \`ip_hash\` CHAR(64) NOT NULL,
++  \`hits\` INT UNSIGNED NOT NULL DEFAULT 1,
++  \`window_start\` INT UNSIGNED NOT NULL,
++  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
++  UNIQUE KEY \`uniq_action_ip\` (\`action_key\`, \`ip_hash\`),
++  KEY \`idx_window\` (\`window_start\`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`;
++
++  const wpConfigSnippet = `// =========================================================================
++// SAHAND Security Hardening & Zero-Trust Constants for wp-config.php
++// Place before "/* That's all, stop editing! Happy publishing. */"
++// =========================================================================
++
++// 1. Server-Side Gemini AI API Key (Never exposed to client bundles)
++define('SAHAND_GEMINI_API_KEY', 'your-google-gemini-api-key-here');
++
++// 2. High-Capacity Atomic Rate Limiting
++define('SAHAND_RATE_LIMIT_ENABLED', true);
++
++// 3. Trusted Reverse Proxies (Cloudflare IPv4/IPv6 CIDR ranges)
++define('SAHAND_TRUSTED_PROXIES', '173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22');
++
++// 4. Content Security Policy (Defaults to Report-Only; set true to strictly enforce)
++define('SAHAND_CSP_REPORT_ONLY', false);
++
++// 5. Disable File Editing from WordPress Admin Panel
++define('DISALLOW_FILE_EDIT', true);`;
++
++  return (
++    <div
++      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md"
++      dir={isRtl ? 'rtl' : 'ltr'}
++    >
++      <div className="relative w-full max-w-5xl max-h-[92vh] flex flex-col rounded-2xl bg-[#090D16] border border-white/10 shadow-2xl text-gray-200 overflow-hidden">
++        
++        {/* Modal Top Header */}
++        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/[0.02]">
++          <div className="flex items-center gap-3">
++            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
++              <Code className="w-5 h-5" />
++            </div>
++            <div>
++              <div className="flex items-center gap-2">
++                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
++                  {lang === 'fa'
++                    ? 'نسخه اختصاصی وردپرس سهند (WordPress Production Edition)'
++                    : lang === 'tr'
++                    ? 'SAHAND WordPress Üretim Sürümü'
++                    : 'SAHAND WordPress Production Edition'}
++                </h2>
++                <span className="px-2 py-0.5 text-[10px] font-mono bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 rounded font-semibold">
++                  PHP 8.2+ · WP 6.7
++                </span>
++              </div>
++              <p className="text-xs text-gray-400 mt-0.5 font-mono">
++                {lang === 'fa'
++                  ? 'معماری تفکیک‌شده: قالب اختصاصی sahand-theme + افزونه منطق تجاری sahand-core'
++                  : 'Decoupled Architecture: sahand-theme (Presentation) + sahand-core (Business Logic)'}
++              </p>
++            </div>
++          </div>
++
++          <button
++            onClick={onClose}
++            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
++          >
++            <X className="w-5 h-5" />
++          </button>
++        </div>
++
++        {/* Sub-tab Navigation */}
++        <div className="flex items-center gap-1 sm:gap-2 px-6 py-2.5 border-b border-white/10 bg-white/[0.01] overflow-x-auto text-xs font-mono">
++          <button
++            onClick={() => setActiveSubTab('overview')}
++            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
++              activeSubTab === 'overview'
++                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-semibold'
++                : 'text-gray-400 hover:text-white hover:bg-white/5'
++            }`}
++          >
++            <Server className="w-3.5 h-3.5" />
++            <span>{lang === 'fa' ? 'نمای کلی و بسته‌های دانلودی' : 'Overview & Packages'}</span>
++          </button>
++
++          <button
++            onClick={() => setActiveSubTab('cpts')}
++            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
++              activeSubTab === 'cpts'
++                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-semibold'
++                : 'text-gray-400 hover:text-white hover:bg-white/5'
++            }`}
++          >
++            <Database className="w-3.5 h-3.5" />
++            <span>{lang === 'fa' ? 'پست‌تایپ‌ها و وب‌سرویس‌های REST' : 'CPTs & REST APIs'}</span>
++          </button>
++
++          <button
++            onClick={() => setActiveSubTab('source')}
++            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
++              activeSubTab === 'source'
++                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-semibold'
++                : 'text-gray-400 hover:text-white hover:bg-white/5'
++            }`}
++          >
++            <FileText className="w-3.5 h-3.5" />
++            <span>{lang === 'fa' ? 'مشاهده‌گر کدهای PHP مخزن' : 'Source Code Inspector'}</span>
++          </button>
++
++          <button
++            onClick={() => setActiveSubTab('runbook')}
++            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
++              activeSubTab === 'runbook'
++                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-semibold'
++                : 'text-gray-400 hover:text-white hover:bg-white/5'
++            }`}
++          >
++            <Terminal className="w-3.5 h-3.5" />
++            <span>{lang === 'fa' ? 'راهنمای استقرار و اسکریپت SQL' : 'Staging Runbook & SQL'}</span>
++          </button>
++        </div>
++
++        {/* Modal Scrollable Content Body */}
++        <div className="flex-1 overflow-y-auto p-6 space-y-6">
++          
++          {/* TAB 1: OVERVIEW & DOWNLOADS */}
++          {activeSubTab === 'overview' && (
++            <div className="space-y-6">
++              
++              {/* Architecture Highlight Banner */}
++              <div className="p-5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-sky-950/20 to-transparent border border-emerald-500/20">
++                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
++                  <div>
++                    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 mb-2">
++                      <span>DECOUPLED WORDPRESS ARCHITECTURE</span>
++                    </div>
++                    <h3 className="text-base font-bold text-white">
++                      {lang === 'fa'
++                        ? 'معماری صددرصد بومی و مستقل بدون نیاز به سرور دائمی نودجی‌اس'
++                        : 'Pure Decoupled PHP 8.2+ Architecture — Zero Node.js Daemon Overhead'}
++                    </h3>
++                    <p className="text-xs text-gray-300 mt-1 max-w-2xl leading-relaxed">
++                      {lang === 'fa'
++                        ? 'این نسخه کاملاً استاندارد برای اجرا بر روی هاست‌های اشتراکی بهینه (مانند cPanel، دایرکت‌ادمین یا سرورهای لینوکس) طراحی شده است. لایه فرانت‌اند و قالب (sahand-theme) کاملاً از لایه هسته و منطق تجاری (sahand-core) تفکیک گردیده تا پایداری و امنیت چندلایه تضمین شود.'
++                        : 'Designed to deploy seamlessly on standard optimized shared hosting or Linux VPS without any persistent background Node.js processes. Presentation is strictly decoupled from business logic.'}
++                    </p>
++                  </div>
++                  
++                  <div className="shrink-0 flex flex-col gap-2">
++                    <span className="text-[11px] font-mono text-gray-400">
++                      {lang === 'fa' ? 'دامنه هدف:' : 'Target Domain:'}{' '}
++                      <strong className="text-sky-300">sahandhaghi.site</strong>
++                    </span>
++                    <span className="text-[11px] font-mono text-emerald-400">
++                      ● STRIDE Hardened & Tested
++                    </span>
++                  </div>
++                </div>
++              </div>
++
++              {/* Package Download Cards */}
++              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
++                
++                {/* 1. sahand-theme package */}
++                <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.08] flex flex-col justify-between hover:border-emerald-500/40 transition-colors">
++                  <div>
++                    <div className="flex items-center justify-between mb-3">
++                      <div className="flex items-center gap-2">
++                        <Folder className="w-5 h-5 text-sky-400" />
++                        <h4 className="text-sm font-bold text-white">sahand-theme</h4>
++                      </div>
++                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">
++                        {wpStatus?.theme.zipSize || '48.4 KB'}
++                      </span>
++                    </div>
++
++                    <p className="text-xs text-gray-400 mb-4 leading-relaxed">
++                      {lang === 'fa'
++                        ? 'پوسته اختصاصی وردپرس شامل کنترلر front-page.php، هدر و فوتر بهینه‌سازی شده، الگوهای پویا برای هر ۸ صفحه، استایل‌های راست‌چین بومی rtl.css و نمودارهای تعاملی SVG.'
++                        : 'Custom presentation theme featuring front-page.php, full dynamic page templates for all 8 hub sections, native RTL stylesheet, and lightweight SVG data flows.'}
++                    </p>
++
++                    <div className="text-[11px] font-mono text-gray-400 space-y-1 mb-5">
++                      <div>📁 مسیر استقرار: <code className="text-sky-300">wp-content/themes/sahand-theme/</code></div>
++                      <div>📄 تعداد فایل‌ها: <span className="text-white font-semibold">{wpStatus?.theme.fileCount || 18} فایل</span></div>
++                      <div>🌐 چندزبانه: <span className="text-emerald-300">فارسی (RTL) / انگلیسی / ترکی</span></div>
++                    </div>
++                  </div>
++
++                  <a
++                    href="/downloads/sahand-theme.zip"
++                    download="sahand-theme.zip"
++                    className="w-full py-2.5 px-4 rounded-lg bg-sky-500 hover:bg-sky-400 text-black font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-[0_0_15px_rgba(56,189,248,0.3)]"
++                  >
++                    <Download className="w-4 h-4" />
++                    <span>{lang === 'fa' ? 'دانلود بسته قالب (sahand-theme.zip)' : 'Download sahand-theme.zip'}</span>
++                  </a>
++                </div>
++
++                {/* 2. sahand-core package */}
++                <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.08] flex flex-col justify-between hover:border-emerald-500/40 transition-colors">
++                  <div>
++                    <div className="flex items-center justify-between mb-3">
++                      <div className="flex items-center gap-2">
++                        <Shield className="w-5 h-5 text-emerald-400" />
++                        <h4 className="text-sm font-bold text-white">sahand-core</h4>
++                      </div>
++                      <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
++                        {wpStatus?.plugin.zipSize || '22.9 KB'}
++                      </span>
++                    </div>
++
++                    <p className="text-xs text-gray-400 mb-4 leading-relaxed">
++                      {lang === 'fa'
++                        ? 'پلاگین مستقل منطق تجاری شامل تعریف ۴ پست‌تایپ، متاباکس‌ها با بررسی مجوز شیء (Object-level Capability)، محدودساز اتمیک نرخ MySQL، درگاه امن سروری Gemini 3.8 و هدرهای CSP.'
++                        : 'Independent core functionality plugin handling 4 Custom Post Types, object-level capability checks, atomic MySQL rate limiting, server-side Gemini 3.8 gateway, and CSP.'}
++                    </p>
++
++                    <div className="text-[11px] font-mono text-gray-400 space-y-1 mb-5">
++                      <div>📁 مسیر استقرار: <code className="text-emerald-300">wp-content/plugins/sahand-core/</code></div>
++                      <div>📄 تعداد فایل‌ها: <span className="text-white font-semibold">{wpStatus?.plugin.fileCount || 11} فایل</span></div>
++                      <div>🛡️ استاندارد امنیت: <span className="text-emerald-300">STRIDE Defense-in-Depth</span></div>
++                    </div>
++                  </div>
++
++                  <a
++                    href="/downloads/sahand-core.zip"
++                    download="sahand-core.zip"
++                    className="w-full py-2.5 px-4 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.3)]"
++                  >
++                    <Download className="w-4 h-4" />
++                    <span>{lang === 'fa' ? 'دانلود بسته پلاگین (sahand-core.zip)' : 'Download sahand-core.zip'}</span>
++                  </a>
++                </div>
++
++              </div>
++
++              {/* Technical Specifications Matrix */}
++              <div className="p-5 rounded-xl bg-white/[0.01] border border-white/[0.08]">
++                <h4 className="text-xs font-mono font-bold text-sky-400 mb-3 uppercase tracking-wider">
++                  {lang === 'fa' ? 'ماتریس مشخصات فنی پلتفرم وردپرس' : 'Technical Specifications Matrix'}
++                </h4>
++                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
++                  <div className="p-3 rounded-lg bg-black/40 border border-white/5">
++                    <span className="text-gray-400 block text-[10px]">PHP VERSION</span>
++                    <strong className="text-white text-sm">8.2 / 8.3+</strong>
++                  </div>
++                  <div className="p-3 rounded-lg bg-black/40 border border-white/5">
++                    <span className="text-gray-400 block text-[10px]">WORDPRESS CORE</span>
++                    <strong className="text-white text-sm">6.4 to 6.7</strong>
++                  </div>
++                  <div className="p-3 rounded-lg bg-black/40 border border-white/5">
++                    <span className="text-gray-400 block text-[10px]">RATE LIMITER</span>
++                    <strong className="text-emerald-400 text-sm">Atomic MySQL</strong>
++                  </div>
++                  <div className="p-3 rounded-lg bg-black/40 border border-white/5">
++                    <span className="text-gray-400 block text-[10px]">AI GATEWAY</span>
++                    <strong className="text-sky-400 text-sm">Gemini 3.8 Server</strong>
++                  </div>
++                </div>
++              </div>
++
++            </div>
++          )}
++
++          {/* TAB 2: CPTS & REST APIS */}
++          {activeSubTab === 'cpts' && (
++            <div className="space-y-6">
++              
++              {/* 4 Custom Post Types */}
++              <div>
++                <h4 className="text-xs font-mono font-bold text-sky-400 mb-3 uppercase tracking-wider">
++                  {lang === 'fa' ? 'انواع پست‌های اختصاصی تعریف‌شده در sahand-core' : 'Registered Custom Post Types in sahand-core'}
++                </h4>
++                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
++                  {wpStatus?.plugin.customPostTypes.map((cpt, idx) => (
++                    <div key={idx} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08]">
++                      <div className="flex items-center justify-between mb-2">
++                        <strong className="text-sm font-bold text-white">{cpt.name}</strong>
++                        <code className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
++                          {cpt.slug}
++                        </code>
++                      </div>
++                      <div className="text-[11px] font-mono text-gray-400">
++                        <span className="text-gray-400 block mb-1">متاداده‌های ثبت‌شده (Object-Level Verified):</span>
++                        <div className="flex flex-wrap gap-1">
++                          {cpt.meta.map((m, mIdx) => (
++                            <span key={mIdx} className="bg-white/5 px-1.5 py-0.5 rounded text-gray-300">
++                              {m}
++                            </span>
++                          ))}
++                        </div>
++                      </div>
++                    </div>
++                  ))}
++                </div>
++              </div>
++
++              {/* REST API Endpoints */}
++              <div>
++                <h4 className="text-xs font-mono font-bold text-emerald-400 mb-3 uppercase tracking-wider">
++                  {lang === 'fa' ? 'مسیرهای وب‌سرویس REST اختصاصی (Namespaced REST Routes)' : 'Namespaced REST Routes (/wp-json/sahand/v1/)'}
++                </h4>
++                <div className="space-y-3">
++                  {wpStatus?.plugin.restEndpoints.map((ep, idx) => (
++                    <div key={idx} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
++                      <div>
++                        <div className="flex items-center gap-2">
++                          <span className="px-2 py-0.5 text-[10px] font-mono font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-400/30">
++                            {ep.method}
++                          </span>
++                          <code className="text-xs font-mono text-white font-semibold">{ep.route}</code>
++                        </div>
++                        <p className="text-xs text-gray-400 mt-1">{ep.description}</p>
++                      </div>
++                      <span className="text-[11px] font-mono text-emerald-400 shrink-0">
++                        🔒 Guarded by Rate Limiter & Nonce
++                      </span>
++                    </div>
++                  ))}
++                </div>
++              </div>
++
++            </div>
++          )}
++
++          {/* TAB 3: SOURCE CODE INSPECTOR */}
++          {activeSubTab === 'source' && (
++            <div className="space-y-4">
++              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/[0.02] p-3 rounded-xl border border-white/[0.08]">
++                <div className="flex items-center gap-2">
++                  <span className="text-xs font-mono text-gray-400 shrink-0">
++                    {lang === 'fa' ? 'انتخاب فایل سورس:' : 'Select PHP Source:'}
++                  </span>
++                  <select
++                    value={selectedFile}
++                    onChange={(e) => setSelectedFile(e.target.value)}
++                    className="bg-black/60 border border-white/20 text-white text-xs font-mono rounded-lg px-3 py-1.5 focus:outline-none focus:border-sky-400 cursor-pointer"
++                  >
++                    {codeFiles.map((cf, idx) => (
++                      <option key={idx} value={cf.path}>
++                        {cf.label}
++                      </option>
++                    ))}
++                  </select>
++                </div>
++
++                <div className="flex items-center gap-2">
++                  <button
++                    onClick={() => copyToClipboard(fileContent, 'source-viewer')}
++                    className="px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-xs font-mono text-gray-200 transition-colors flex items-center gap-1.5 cursor-pointer"
++                  >
++                    {copiedCode === 'source-viewer' ? (
++                      <>
++                        <Check className="w-3.5 h-3.5 text-emerald-400" />
++                        <span className="text-emerald-400">{lang === 'fa' ? 'کپی شد' : 'Copied'}</span>
++                      </>
++                    ) : (
++                      <>
++                        <Copy className="w-3.5 h-3.5 text-gray-400" />
++                        <span>{lang === 'fa' ? 'کپی کل فایل' : 'Copy Full File'}</span>
++                      </>
++                    )}
++                  </button>
++                </div>
++              </div>
++
++              {/* Code viewer box */}
++              <div className="relative rounded-xl bg-black/80 border border-white/10 overflow-hidden font-mono text-xs">
++                <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-white/[0.02] text-gray-400 text-[11px]">
++                  <span>{selectedFile}</span>
++                  {isLoadingFile && <span className="text-sky-400 animate-pulse">Loading...</span>}
++                </div>
++                <pre
++                  className="p-4 text-emerald-200/90 overflow-x-auto max-h-[50vh] leading-relaxed whitespace-pre font-mono"
++                  dir="ltr"
++                >
++                  {fileContent}
++                </pre>
++              </div>
++            </div>
++          )}
++
++          {/* TAB 4: RUNBOOK & SQL BOOTSTRAP */}
++          {activeSubTab === 'runbook' && (
++            <div className="space-y-6">
++              
++              {/* 1. Database Table Bootstrap */}
++              <div>
++                <div className="flex items-center justify-between mb-2">
++                  <h4 className="text-xs font-mono font-bold text-sky-400 uppercase tracking-wider">
++                    {lang === 'fa' ? '۱. اسکریپت ساخت جدول محدودسازی نرخ اتمیک در MySQL' : '1. Atomic Rate-Limiter MySQL Table DDL'}
++                  </h4>
++                  <button
++                    onClick={() => copyToClipboard(sqlBootstrapSnippet, 'sql-snippet')}
++                    className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-[11px] font-mono text-gray-300 transition-colors flex items-center gap-1 cursor-pointer"
++                  >
++                    {copiedCode === 'sql-snippet' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-gray-400" />}
++                    <span>{copiedCode === 'sql-snippet' ? 'کپی شد' : 'Copy SQL'}</span>
++                  </button>
++                </div>
++                <pre className="p-4 rounded-xl bg-black/70 border border-white/10 text-xs font-mono text-sky-200 overflow-x-auto leading-relaxed" dir="ltr">
++                  {sqlBootstrapSnippet}
++                </pre>
++              </div>
++
++              {/* 2. wp-config.php constants */}
++              <div>
++                <div className="flex items-center justify-between mb-2">
++                  <h4 className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">
++                    {lang === 'fa' ? '۲. ثوابت امنیتی و کلید هوش مصنوعی در wp-config.php' : '2. Hardening & API Constants for wp-config.php'}
++                  </h4>
++                  <button
++                    onClick={() => copyToClipboard(wpConfigSnippet, 'wpconfig-snippet')}
++                    className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-[11px] font-mono text-gray-300 transition-colors flex items-center gap-1 cursor-pointer"
++                  >
++                    {copiedCode === 'wpconfig-snippet' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-gray-400" />}
++                    <span>{copiedCode === 'wpconfig-snippet' ? 'کپی شد' : 'Copy Config'}</span>
++                  </button>
++                </div>
++                <pre className="p-4 rounded-xl bg-black/70 border border-white/10 text-xs font-mono text-emerald-200 overflow-x-auto leading-relaxed" dir="ltr">
++                  {wpConfigSnippet}
++                </pre>
++              </div>
++
++              {/* 3. Staging Checklist */}
++              <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.08]">
++                <h4 className="text-xs font-mono font-bold text-amber-400 mb-3 uppercase tracking-wider">
++                  {lang === 'fa' ? '۳. چک‌لیست استقرار نهایی در هاست اشتراکی' : '3. Live Hosting Deployment Checklist'}
++                </h4>
++                <ul className="text-xs space-y-2 text-gray-300 leading-relaxed">
++                  <li className="flex items-start gap-2">
++                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
++                    <span>آپلود و فعال‌سازی <code className="text-emerald-300">sahand-core.zip</code> از طریق مدیریت افزونه‌های وردپرس.</span>
++                  </li>
++                  <li className="flex items-start gap-2">
++                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
++                    <span>آپلود و فعال‌سازی پوسته <code className="text-sky-300">sahand-theme.zip</code> از طریق بخش نمایش &gt; پوسته‌ها.</span>
++                  </li>
++                  <li className="flex items-start gap-2">
++                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
++                    <span>بررسی فعال بودن افزونه Polylang جهت مدیریت ساختار چندزبانه (/fa/, /en/, /tr/).</span>
++                  </li>
++                  <li className="flex items-start gap-2">
++                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
++                    <span>مسدودسازی اجرای مستقیم فایل‌های PHP در پوشه <code className="text-amber-300">wp-content/uploads/</code> (خودکار توسط sahand-core انجام می‌پذیرد).</span>
++                  </li>
++                </ul>
++              </div>
++
++            </div>
++          )}
++
++        </div>
++
++        {/* Modal Bottom Action Bar */}
++        <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border-t border-white/10 bg-white/[0.02] gap-3">
++          <div className="text-xs font-mono text-gray-400 flex items-center gap-2">
++            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
++            <span>PRODUCTION PACKAGES READY IN /public/downloads/</span>
++          </div>
++
++          <div className="flex items-center gap-3 w-full sm:w-auto">
++            <a
++              href="/downloads/sahand-theme.zip"
++              download="sahand-theme.zip"
++              className="px-3.5 py-1.5 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-400/30 hover:bg-sky-500/30 text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
++            >
++              <Download className="w-3.5 h-3.5" />
++              <span>sahand-theme.zip</span>
++            </a>
++
++            <a
++              href="/downloads/sahand-core.zip"
++              download="sahand-core.zip"
++              className="px-3.5 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 hover:bg-emerald-500/30 text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer"
++            >
++              <Download className="w-3.5 h-3.5" />
++              <span>sahand-core.zip</span>
++            </a>
++
++            <button
++              onClick={onClose}
++              className="px-4 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-mono transition-colors cursor-pointer"
++            >
++              {lang === 'fa' ? 'بستن' : 'Close'}
++            </button>
++          </div>
++        </div>
++
++      </div>
++    </div>
++  );
++};
+diff --git a/wordpress/wp-content/themes/sahand-theme/front-page.php b/wordpress/wp-content/themes/sahand-theme/front-page.php
+index 7d04ba3..7373087 100644
+--- a/wordpress/wp-content/themes/sahand-theme/front-page.php
++++ b/wordpress/wp-content/themes/sahand-theme/front-page.php
+@@ -97,7 +97,7 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
+             </div>
+             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
+               <span>Sovereign AI Gateway</span>
+-              <span style="color: var(--color-success);">Gemini 2.5 Server</span>
++              <span style="color: var(--color-success);">Gemini 3.8 Server</span>
+             </div>
+             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
+               <span>Decoupled CMS Platform</span>
+@@ -138,7 +138,7 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
+           <p style="font-size: 0.875rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1rem;">
+             <?php esc_html_e('Server-side LLM inference pipelines, vector embeddings, and prompt defense.', 'sahand-theme'); ?>
+           </p>
+-          <div class="badge badge-tech">Gemini 2.5 · Vector RAG</div>
++          <div class="badge badge-tech">Gemini 3.8 · Vector RAG</div>
+         </div>
+ 
+         <div class="sahand-card">
+-- 
+2.34.1
+

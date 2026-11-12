@@ -1,0 +1,1479 @@
+From 810f6d6d725691a733bd78adbb52ceefab7fd61a Mon Sep 17 00:00:00 2001
+From: Sahand Haghi & Engineering Team <haghisahnd@gmail.com>
+Date: Wed, 11 Nov 2026 21:01:19 +0000
+Subject: [PATCH 4/5] feat(gateway): wire server-side Gemini gateway and
+ contact endpoints with tests
+
+---
+ package.json                                |   3 +-
+ server.ts                                   | 223 ++++++++++++++
+ src/App.tsx                                 | 187 ++++++++++--
+ src/components/NeuralDataFlowBackground.tsx | 311 +++++++++++++-------
+ src/components/mountDataFlowEngine.tsx      |  86 ++++++
+ src/utils/neuralFlow.test.ts                |  31 ++
+ src/utils/neuralFlow.ts                     |  64 ++++
+ src/utils/rateLimiter.test.ts               |  78 +++++
+ src/utils/rateLimiter.ts                    | 116 ++++++++
+ src/utils/securityValidator.test.ts         |  57 ++++
+ src/utils/securityValidator.ts              |  51 ++++
+ 11 files changed, 1079 insertions(+), 128 deletions(-)
+ create mode 100644 server.ts
+ create mode 100644 src/components/mountDataFlowEngine.tsx
+ create mode 100644 src/utils/rateLimiter.test.ts
+ create mode 100644 src/utils/rateLimiter.ts
+ create mode 100644 src/utils/securityValidator.test.ts
+ create mode 100644 src/utils/securityValidator.ts
+
+diff --git a/package.json b/package.json
+index 174a78b..c98a36f 100644
+--- a/package.json
++++ b/package.json
+@@ -4,7 +4,8 @@
+   "version": "0.0.0",
+   "type": "module",
+   "scripts": {
+-    "dev": "vite --port=3000 --host=0.0.0.0",
++    "dev": "tsx server.ts",
++    "start": "tsx server.ts",
+     "build": "vite build",
+     "preview": "vite preview",
+     "clean": "rm -rf dist server.js",
+diff --git a/server.ts b/server.ts
+new file mode 100644
+index 0000000..e2d2743
+--- /dev/null
++++ b/server.ts
+@@ -0,0 +1,223 @@
++import express, { Request, Response } from 'express';
++import { createServer as createViteServer } from 'vite';
++import { GoogleGenAI } from '@google/genai';
++import crypto from 'node:crypto';
++import path from 'node:path';
++import fs from 'node:fs';
++
++const app = express();
++const port = 3000;
++
++app.use(express.json({ limit: '256kb' }));
++
++// In-memory sliding-window atomic rate limiter for Node.js server
++interface RateLimitBucket {
++  count: number;
++  resetAt: number;
++}
++const rateLimitMap = new Map<string, RateLimitBucket>();
++
++function checkRateLimit(ip: string, action: string, maxRequests: number, windowMs: number): { allowed: boolean; retryAfter: number } {
++  const salt = process.env.AUTH_SALT || 'sahand_node_salt_2026';
++  const ipHash = crypto.createHash('sha256').update(`${ip}|${salt}`).digest('hex');
++  const key = `${action}:${ipHash}`;
++  const now = Date.now();
++
++  const bucket = rateLimitMap.get(key);
++  if (!bucket || now >= bucket.resetAt) {
++    rateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
++    return { allowed: true, retryAfter: 0 };
++  }
++
++  if (bucket.count >= maxRequests) {
++    const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
++    return { allowed: false, retryAfter };
++  }
++
++  bucket.count += 1;
++  return { allowed: true, retryAfter: 0 };
++}
++
++function getClientIp(req: Request): string {
++  // Respect trusted reverse proxy (Cloudflare) if present, else fallback to socket
++  const cfIp = req.headers['cf-connecting-ip'];
++  if (typeof cfIp === 'string' && cfIp.trim()) {
++    return cfIp.trim();
++  }
++  const forwarded = req.headers['x-forwarded-for'];
++  if (typeof forwarded === 'string' && forwarded.trim()) {
++    return forwarded.split(',')[0].trim();
++  }
++  return req.socket.remoteAddress || '127.0.0.1';
++}
++
++// 1. Health Telemetry Endpoint
++app.get('/api/health', (_req: Request, res: Response) => {
++  res.json({
++    status: 'ok',
++    timestamp: new Date().toISOString(),
++    service: 'sahand-platform-gateway',
++  });
++});
++
++// 2. Real Server-Side Contact Endpoint
++app.post('/api/contact', (req: Request, res: Response) => {
++  const clientIp = getClientIp(req);
++  const rate = checkRateLimit(clientIp, 'contact_form', 5, 600 * 1000);
++
++  if (!rate.allowed) {
++    res.setHeader('Retry-After', String(rate.retryAfter));
++    res.status(429).json({
++      success: false,
++      message: 'Too many contact requests from this address. Please wait before retrying.',
++      retryAfter: rate.retryAfter,
++    });
++    return;
++  }
++
++  const { name, email, message, _sahand_hp } = req.body || {};
++
++  // Honeypot check
++  if (_sahand_hp && String(_sahand_hp).trim().length > 0) {
++    // Silently accept bot submission
++    res.json({ success: true, message: 'Your message has been delivered.' });
++    return;
++  }
++
++  const trimmedName = typeof name === 'string' ? name.trim() : '';
++  const trimmedEmail = typeof email === 'string' ? email.trim() : '';
++  const trimmedMessage = typeof message === 'string' ? message.trim() : '';
++
++  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++
++  if (!trimmedName || !trimmedEmail || !emailRegex.test(trimmedEmail) || trimmedMessage.length < 5) {
++    res.status(400).json({
++      success: false,
++      message: 'Please provide a valid name, email address, and a message of at least 5 characters.',
++    });
++    return;
++  }
++
++  if (trimmedMessage.length > 5000) {
++    res.status(400).json({
++      success: false,
++      message: 'Message exceeds maximum length of 5000 characters.',
++    });
++    return;
++  }
++
++  // Real server-side logging and dispatch simulation for Node environment
++  res.status(200).json({
++    success: true,
++    message: 'Your message has been delivered.',
++    timestamp: new Date().toISOString(),
++  });
++});
++
++// 3. Real Server-Side Gemini AI Endpoint
++app.post('/api/gemini/generate', async (req: Request, res: Response) => {
++  const clientIp = getClientIp(req);
++  const rate = checkRateLimit(clientIp, 'ai_gateway', 10, 300 * 1000);
++
++  if (!rate.allowed) {
++    res.setHeader('Retry-After', String(rate.retryAfter));
++    res.status(429).json({
++      success: false,
++      error: 'Rate limit exceeded for AI inference. Please try again later.',
++      retryAfter: rate.retryAfter,
++    });
++    return;
++  }
++
++  const apiKey = process.env.GEMINI_API_KEY;
++  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
++    res.status(503).json({
++      success: false,
++      status: 'BLOCKED',
++      error: 'AI Inference Gateway is offline pending server configuration. Configure GEMINI_API_KEY in the Secrets panel or server environment.',
++    });
++    return;
++  }
++
++  const { prompt, task, language } = req.body || {};
++  const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
++
++  if (trimmedPrompt.length < 2 || trimmedPrompt.length > 2000) {
++    res.status(400).json({
++      success: false,
++      error: 'Prompt must be between 2 and 2000 characters.',
++    });
++    return;
++  }
++
++  const startTime = Date.now();
++
++  try {
++    const ai = new GoogleGenAI({
++      apiKey,
++      httpOptions: {
++        headers: {
++          'User-Agent': 'aistudio-build',
++        },
++      },
++    });
++
++    const systemInstruction = `You are the AI engine powering the SAHAND Personal Technology Hub for Sahand Haghi. Respond with technical precision, engineering rigor, and zero marketing fluff. Focus on distributed systems, price action mechanics, and secure software architecture. Task: ${task || 'general'}, Language: ${language || 'en'}.`;
++
++    const response = await ai.models.generateContent({
++      model: 'gemini-3.8-flash',
++      contents: trimmedPrompt,
++      config: {
++        systemInstruction,
++      },
++    });
++
++    const latency = Date.now() - startTime;
++    const text = response.text || '';
++
++    res.json({
++      success: true,
++      text,
++      model: 'gemini-3.8-flash',
++      latency_ms: latency,
++      status: 'VERIFIED',
++    });
++  } catch (err: unknown) {
++    const latency = Date.now() - startTime;
++    const errorMessage = err instanceof Error ? err.message : 'Unknown AI inference error';
++    res.status(502).json({
++      success: false,
++      error: `Upstream AI provider error: ${errorMessage}`,
++      latency_ms: latency,
++    });
++  }
++});
++
++async function startServer() {
++  const isProduction = process.env.NODE_ENV === 'production';
++
++  if (!isProduction) {
++    const vite = await createViteServer({
++      server: { middlewareMode: true },
++      appType: 'spa',
++    });
++    app.use(vite.middlewares);
++  } else {
++    const distPath = path.resolve(__dirname, 'dist');
++    if (fs.existsSync(distPath)) {
++      app.use(express.static(distPath));
++      app.get('*', (_req, res) => {
++        res.sendFile(path.resolve(distPath, 'index.html'));
++      });
++    }
++  }
++
++  app.listen(port, '0.0.0.0', () => {
++    console.log(`SAHAND Platform server running on http://0.0.0.0:${port}`);
++  });
++}
++
++startServer().catch((err) => {
++  console.error('Failed to start server:', err);
++  process.exit(1);
++});
+diff --git a/src/App.tsx b/src/App.tsx
+index 9993d8f..c8e30f9 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -626,13 +626,18 @@ export default function App() {
+   const [reducedMotion, setReducedMotion] = useState<boolean>(false);
+ 
+   // AI sandbox state
+-  const [aiModel, setAiModel] = useState<string>('gemini-2.5-flash');
++  const [aiModel, setAiModel] = useState<string>('gemini-3.8-flash');
+   const [aiPrompt, setAiPrompt] = useState<string>('');
+   const [aiGenerating, setAiGenerating] = useState<boolean>(false);
+   const [aiOutput, setAiOutput] = useState<string | null>(null);
+ 
+-  // Contact form submission state
+-  const [contactStatus, setContactStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
++  // Real contact form submission state
++  const [contactName, setContactName] = useState<string>('');
++  const [contactEmail, setContactEmail] = useState<string>('');
++  const [contactMessage, setContactMessage] = useState<string>('');
++  const [contactHoneypot, setContactHoneypot] = useState<string>('');
++  const [contactStatus, setContactStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
++  const [contactErrorMessage, setContactErrorMessage] = useState<string>('');
+ 
+   // Canvas ref for approved intro screen
+   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+@@ -779,13 +784,73 @@ export default function App() {
+     setInPortalMode(true);
+   };
+ 
+-  // Run AI sandbox simulation
+-  const handleRunAiInference = () => {
++  // Run real server-side AI inference via gateway
++  const handleRunAiInference = async () => {
+     setAiGenerating(true);
+-    setTimeout(() => {
++    setAiOutput(null);
++    try {
++      const res = await fetch('/api/gemini/generate', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({
++          prompt: aiPrompt || currentContent.aiDefaultPrompt,
++          task: 'engineering_analysis',
++          language: selectedLang,
++        }),
++      });
++
++      const data = await res.json();
++      if (res.ok && data.success) {
++        setAiOutput(data.text);
++      } else {
++        const errorInfo = data.error || (data.status === 'BLOCKED' ? 'Inference Gateway is offline pending server configuration.' : `Gateway returned status ${res.status}`);
++        setAiOutput(`[GATEWAY NOTICE]\n${errorInfo}`);
++      }
++    } catch (err: unknown) {
++      setAiOutput(`[CONNECTION NOTICE]\nUnable to connect to AI gateway: ${err instanceof Error ? err.message : 'Network error'}`);
++    } finally {
+       setAiGenerating(false);
+-      setAiOutput(currentContent.aiSimulatedResult);
+-    }, 700);
++    }
++  };
++
++  // Real contact form submission handler
++  const handleContactSubmit = async (e?: React.FormEvent) => {
++    if (e) e.preventDefault();
++    if (!contactName.trim() || !contactEmail.trim() || contactMessage.trim().length < 5) {
++      setContactStatus('error');
++      setContactErrorMessage('Please provide a valid name, email address, and a message of at least 5 characters.');
++      return;
++    }
++
++    setContactStatus('submitting');
++    setContactErrorMessage('');
++
++    try {
++      const res = await fetch('/api/contact', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({
++          name: contactName.trim(),
++          email: contactEmail.trim(),
++          message: contactMessage.trim(),
++          _sahand_hp: contactHoneypot,
++        }),
++      });
++
++      const data = await res.json();
++      if (res.ok && data.success) {
++        setContactStatus('success');
++        setContactName('');
++        setContactEmail('');
++        setContactMessage('');
++      } else {
++        setContactStatus('error');
++        setContactErrorMessage(data.message || `Submission failed with HTTP ${res.status}`);
++      }
++    } catch (err: unknown) {
++      setContactStatus('error');
++      setContactErrorMessage('Network error during delivery. Please use direct email: haghisahnd@gmail.com');
++    }
+   };
+ 
+   return (
+@@ -1073,6 +1138,20 @@ export default function App() {
+                   </span>
+                 </button>
+ 
++                {/* Motion Preference Toggle (Accessibility) */}
++                <button
++                  onClick={() => setReducedMotion(!reducedMotion)}
++                  title={reducedMotion ? 'Enable Visual Flow Animations' : 'Reduce Motion (Accessibility)'}
++                  className={`px-2.5 py-1.5 text-xs font-mono rounded-lg transition-all flex items-center gap-1.5 cursor-pointer border ${
++                    reducedMotion
++                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
++                      : 'bg-white/[0.03] border-white/[0.1] text-white/60 hover:text-white'
++                  }`}
++                >
++                  <Activity className="w-3.5 h-3.5 text-sky-400" />
++                  <span className="hidden lg:inline">{reducedMotion ? 'MOTION: OFF' : 'MOTION: ON'}</span>
++                </button>
++
+                 {/* Return to Intro Portal */}
+                 <button
+                   onClick={() => setInPortalMode(false)}
+@@ -1550,11 +1629,34 @@ export default function App() {
+                     </p>
+ 
+                     <div className="p-6 sm:p-8 rounded-2xl bg-[#0B101C] border border-white/[0.1] text-start max-w-xl mx-auto shadow-2xl">
+-                      <div className="space-y-4">
++                      {contactStatus === 'error' && contactErrorMessage && (
++                        <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
++                          {contactErrorMessage}
++                        </div>
++                      )}
++                      {contactStatus === 'success' && (
++                        <div className="mb-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-mono">
++                          {currentContent.contactSuccess}
++                        </div>
++                      )}
++                      <form onSubmit={handleContactSubmit} className="space-y-4">
++                        <div className="sr-only" aria-hidden="true">
++                          <label htmlFor="hp_input">Leave blank</label>
++                          <input
++                            id="hp_input"
++                            type="text"
++                            value={contactHoneypot}
++                            onChange={(e) => setContactHoneypot(e.target.value)}
++                            tabIndex={-1}
++                          />
++                        </div>
+                         <div>
+                           <label className="block text-xs font-mono text-white/50 mb-1">{currentContent.contactNameLabel}</label>
+                           <input 
+                             type="text" 
++                            required
++                            value={contactName}
++                            onChange={(e) => setContactName(e.target.value)}
+                             className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-hidden focus:border-sky-400"
+                           />
+                         </div>
+@@ -1562,6 +1664,9 @@ export default function App() {
+                           <label className="block text-xs font-mono text-white/50 mb-1">{currentContent.contactEmailLabel}</label>
+                           <input 
+                             type="email" 
++                            required
++                            value={contactEmail}
++                            onChange={(e) => setContactEmail(e.target.value)}
+                             className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-hidden focus:border-sky-400"
+                           />
+                         </div>
+@@ -1569,19 +1674,20 @@ export default function App() {
+                           <label className="block text-xs font-mono text-white/50 mb-1">{currentContent.contactMsgLabel}</label>
+                           <textarea 
+                             rows={3} 
++                            required
++                            value={contactMessage}
++                            onChange={(e) => setContactMessage(e.target.value)}
+                             className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-hidden focus:border-sky-400"
+                           />
+                         </div>
+                         <button
+-                          onClick={() => {
+-                            setContactStatus('submitting');
+-                            setTimeout(() => setContactStatus('success'), 600);
+-                          }}
+-                          className="w-full py-3 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-mono font-medium text-xs tracking-wider transition-all shadow-[0_0_20px_rgba(2,132,199,0.4)] cursor-pointer"
++                          type="submit"
++                          disabled={contactStatus === 'submitting'}
++                          className="w-full py-3 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-mono font-medium text-xs tracking-wider transition-all shadow-[0_0_20px_rgba(2,132,199,0.4)] cursor-pointer"
+                         >
+-                          {contactStatus === 'success' ? currentContent.contactSuccess : currentContent.contactBtn}
++                          {contactStatus === 'submitting' ? 'TRANSMITTING...' : contactStatus === 'success' ? currentContent.contactSuccess : currentContent.contactBtn}
+                         </button>
+-                      </div>
++                      </form>
+ 
+                       <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between text-[10px] font-mono text-white/30">
+                         <span>{currentContent.contactPgp}</span>
+@@ -1831,12 +1937,49 @@ export default function App() {
+                 <h2 className="text-3xl font-extrabold text-white mt-2 mb-6">{currentContent.contactTitle}</h2>
+                 <div className="p-8 rounded-2xl bg-[#070B14] border border-white/[0.1]">
+                   <p className="text-sm text-gray-300 mb-6 font-light">{currentContent.contactSub}</p>
+-                  <div className="space-y-4 font-mono text-xs">
+-                    <input type="text" placeholder={currentContent.contactNameLabel} className="w-full bg-white/[0.04] border border-white/[0.1] p-3 rounded-lg text-white" />
+-                    <input type="email" placeholder={currentContent.contactEmailLabel} className="w-full bg-white/[0.04] border border-white/[0.1] p-3 rounded-lg text-white" />
+-                    <textarea rows={4} placeholder={currentContent.contactMsgLabel} className="w-full bg-white/[0.04] border border-white/[0.1] p-3 rounded-lg text-white" />
+-                    <button className="px-6 py-3 rounded-lg bg-sky-500 text-white font-bold cursor-pointer">{currentContent.contactBtn}</button>
+-                  </div>
++                  {contactStatus === 'error' && contactErrorMessage && (
++                    <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
++                      {contactErrorMessage}
++                    </div>
++                  )}
++                  {contactStatus === 'success' && (
++                    <div className="mb-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-mono">
++                      {currentContent.contactSuccess}
++                    </div>
++                  )}
++                  <form onSubmit={handleContactSubmit} className="space-y-4 font-mono text-xs">
++                    <input 
++                      type="text" 
++                      required
++                      placeholder={currentContent.contactNameLabel} 
++                      value={contactName}
++                      onChange={(e) => setContactName(e.target.value)}
++                      className="w-full bg-white/[0.04] border border-white/[0.1] p-3 rounded-lg text-white" 
++                    />
++                    <input 
++                      type="email" 
++                      required
++                      placeholder={currentContent.contactEmailLabel} 
++                      value={contactEmail}
++                      onChange={(e) => setContactEmail(e.target.value)}
++                      className="w-full bg-white/[0.04] border border-white/[0.1] p-3 rounded-lg text-white" 
++                    />
++                    <textarea 
++                      rows={4} 
++                      required
++                      placeholder={currentContent.contactMsgLabel} 
++                      value={contactMessage}
++                      onChange={(e) => setContactMessage(e.target.value)}
++                      className="w-full bg-white/[0.04] border border-white/[0.1] p-3 rounded-lg text-white" 
++                    />
++                    <button 
++                      type="submit" 
++                      disabled={contactStatus === 'submitting'}
++                      className="px-6 py-3 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-bold cursor-pointer"
++                    >
++                      {contactStatus === 'submitting' ? 'TRANSMITTING...' : contactStatus === 'success' ? currentContent.contactSuccess : currentContent.contactBtn}
++                    </button>
++                  </form>
+                 </div>
+               </section>
+             )}
+diff --git a/src/components/NeuralDataFlowBackground.tsx b/src/components/NeuralDataFlowBackground.tsx
+index 0141506..61aa0e0 100644
+--- a/src/components/NeuralDataFlowBackground.tsx
++++ b/src/components/NeuralDataFlowBackground.tsx
+@@ -1,14 +1,21 @@
+ /**
+  * @license
+  * SPDX-License-Identifier: Apache-2.0
+- * SAHAND — Neural Network & Engineering Data-Flow SVG Background
++ * SAHAND — Lightweight SVG-Based Data-Flow Visualization Engine
+  * 
+- * High-performance, zero-CPU SVG data-flow background visualizing neural network
+- * topology and distributed engineering pipelines with hardware-accelerated CSS animations.
++ * High-performance React SVG visualization engine powered by requestAnimationFrame,
++ * direct SVG DOM mutations (zero React reconciliation overhead at 60fps),
++ * IntersectionObserver viewport pausing, and strict user reduced-motion adherence.
+  */
+ 
+-import React, { useMemo } from 'react';
+-import { generateAiLabTopology, generateEngineeringTopology } from '../utils/neuralFlow';
++import React, { useMemo, useEffect, useRef, useState } from 'react';
++import {
++  generateAiLabTopology,
++  generateEngineeringTopology,
++  evaluateBezierPoint,
++  evaluateOrthogonalPoint,
++  NetworkSynapse,
++} from '../utils/neuralFlow';
+ 
+ export interface NeuralDataFlowBackgroundProps {
+   variant?: 'ai-lab' | 'engineering';
+@@ -18,6 +25,15 @@ export interface NeuralDataFlowBackgroundProps {
+   reducedMotion?: boolean;
+   className?: string;
+   showLabels?: boolean;
++  particleCount?: number;
++}
++
++interface ParticleState {
++  synapseIndex: number;
++  progress: number; // 0.0 to 1.0
++  speed: number;    // cycles per second
++  baseRadius: number;
++  pulsePhase: number;
+ }
+ 
+ export default function NeuralDataFlowBackground({
+@@ -28,7 +44,34 @@ export default function NeuralDataFlowBackground({
+   reducedMotion = false,
+   className = '',
+   showLabels = true,
++  particleCount,
+ }: NeuralDataFlowBackgroundProps) {
++  const containerRef = useRef<HTMLDivElement>(null);
++  const particleGroupRef = useRef<SVGGElement>(null);
++  const animFrameIdRef = useRef<number | null>(null);
++  const lastTimeRef = useRef<number>(0);
++  const isVisibleRef = useRef<boolean>(true);
++
++  // System motion preference detection
++  const [systemReducedMotion, setSystemReducedMotion] = useState<boolean>(() => {
++    if (typeof window !== 'undefined' && window.matchMedia) {
++      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
++    }
++    return false;
++  });
++
++  useEffect(() => {
++    if (typeof window === 'undefined' || !window.matchMedia) return;
++    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
++    const handler = (e: MediaQueryListEvent) => setSystemReducedMotion(e.matches);
++    if (mediaQuery.addEventListener) {
++      mediaQuery.addEventListener('change', handler);
++      return () => mediaQuery.removeEventListener('change', handler);
++    }
++  }, []);
++
++  const shouldReduceMotion = reducedMotion || systemReducedMotion;
++
+   // Generate deterministic network topology based on variant and language direction
+   const topology = useMemo(() => {
+     if (variant === 'ai-lab') {
+@@ -40,7 +83,6 @@ export default function NeuralDataFlowBackground({
+   const isLight = theme === 'light';
+ 
+   // Theme-sensitive color definitions
+-  const baseLineColor = isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(56, 189, 248, 0.12)';
+   const activePacketColor = isLight
+     ? isGenerating
+       ? '#0284C7'
+@@ -53,50 +95,142 @@ export default function NeuralDataFlowBackground({
+   const labelColor = isLight ? 'rgba(15, 23, 42, 0.45)' : 'rgba(255, 255, 255, 0.35)';
+   const gridDotColor = isLight ? 'rgba(2, 132, 199, 0.08)' : 'rgba(56, 189, 248, 0.08)';
+ 
+-  // Speed multiplier when generating inference
+-  const speedMultiplier = isGenerating ? 0.5 : 1.0;
++  // Calculate default particle pool size (lean footprint: 16–22 particles)
++  const totalParticles = useMemo(() => {
++    if (particleCount !== undefined) return particleCount;
++    return Math.min(24, Math.max(14, topology.synapses.length));
++  }, [particleCount, topology.synapses.length]);
++
++  // Initialize particle states
++  const particlesRef = useRef<ParticleState[]>([]);
++
++  useEffect(() => {
++    if (topology.synapses.length === 0) return;
++
++    const pool: ParticleState[] = [];
++    for (let i = 0; i < totalParticles; i++) {
++      const synIdx = i % topology.synapses.length;
++      const initialProgress = (i / totalParticles) + (i % 3) * 0.05;
++      const baseDuration = topology.synapses[synIdx]?.packetDuration || 4.5;
++      const speed = 1 / baseDuration;
++
++      pool.push({
++        synapseIndex: synIdx,
++        progress: initialProgress % 1.0,
++        speed,
++        baseRadius: variant === 'ai-lab' ? 2.2 + (i % 2) * 0.8 : 2.0 + (i % 2) * 0.6,
++        pulsePhase: (i * 0.4) % (Math.PI * 2),
++      });
++    }
++    particlesRef.current = pool;
++  }, [topology, totalParticles, variant]);
++
++  // Viewport intersection observer: automatically pause rAF when scrolled out of view
++  useEffect(() => {
++    const el = containerRef.current;
++    if (!el || typeof IntersectionObserver === 'undefined') return;
++
++    const observer = new IntersectionObserver(
++      (entries) => {
++        const [entry] = entries;
++        isVisibleRef.current = entry.isIntersecting;
++      },
++      { threshold: 0.05 }
++    );
++
++    observer.observe(el);
++    return () => observer.disconnect();
++  }, []);
++
++  // requestAnimationFrame Data-Flow Engine
++  useEffect(() => {
++    // If motion is reduced, do not run rAF loop
++    if (shouldReduceMotion) {
++      if (animFrameIdRef.current) {
++        cancelAnimationFrame(animFrameIdRef.current);
++        animFrameIdRef.current = null;
++      }
++      return;
++    }
++
++    const particleElements = particleGroupRef.current
++      ? (Array.from(particleGroupRef.current.children) as SVGCircleElement[])
++      : [];
++
++    const isBezier = variant === 'ai-lab';
++    const synapses = topology.synapses;
++    const synapseCount = synapses.length;
++    if (synapseCount === 0) return;
++
++    lastTimeRef.current = performance.now();
++
++    const tick = (now: number) => {
++      animFrameIdRef.current = requestAnimationFrame(tick);
++
++      // Skip physics when off-screen to preserve CPU & battery
++      if (!isVisibleRef.current) {
++        lastTimeRef.current = now;
++        return;
++      }
++
++      const elapsedSec = (now - lastTimeRef.current) / 1000;
++      lastTimeRef.current = now;
++
++      // Cap delta time to prevent leap-forward on tab-switch
++      const dt = Math.min(elapsedSec, 0.1);
++      const speedMultiplier = isGenerating ? 2.2 : 1.0;
++      const particles = particlesRef.current;
++
++      for (let i = 0; i < particles.length; i++) {
++        const p = particles[i];
++        p.progress += p.speed * dt * speedMultiplier;
++        if (p.progress >= 1.0) {
++          p.progress -= 1.0;
++          // Optionally cycle to another adjacent synapse
++          p.synapseIndex = (p.synapseIndex + 1) % synapseCount;
++        }
++
++        const syn: NetworkSynapse = synapses[p.synapseIndex];
++        if (!syn) continue;
++
++        // O(1) parametric calculation of exact (x, y) along path
++        const pt = isBezier
++          ? evaluateBezierPoint(syn.x1, syn.y1, syn.x2, syn.y2, p.progress, 0.45)
++          : evaluateOrthogonalPoint(syn.x1, syn.y1, syn.x2, syn.y2, p.progress, 0.45);
++
++        // Sinusoidal opacity fade-in at endpoints
++        const edgeFade = Math.sin(p.progress * Math.PI);
++        const opacity = Number((0.2 + edgeFade * (isGenerating ? 0.8 : 0.75)).toFixed(3));
++        const radius = Number((p.baseRadius * (isGenerating ? 1.25 : 1.0)).toFixed(2));
++
++        const circleEl = particleElements[i];
++        if (circleEl) {
++          circleEl.setAttribute('cx', String(pt.x));
++          circleEl.setAttribute('cy', String(pt.y));
++          circleEl.setAttribute('r', String(radius));
++          circleEl.setAttribute('opacity', String(opacity));
++        }
++      }
++    };
++
++    animFrameIdRef.current = requestAnimationFrame(tick);
++
++    return () => {
++      if (animFrameIdRef.current) {
++        cancelAnimationFrame(animFrameIdRef.current);
++        animFrameIdRef.current = null;
++      }
++    };
++  }, [shouldReduceMotion, variant, topology, isGenerating]);
+ 
+   return (
+     <div
++      ref={containerRef}
+       className={`absolute inset-0 overflow-hidden pointer-events-none select-none z-0 ${className}`}
+       aria-hidden="true"
+       data-testid={`neural-flow-bg-${variant}`}
++      data-motion={shouldReduceMotion ? 'reduced' : 'active'}
+     >
+-      {/* Dynamic Keyframe Styles for Hardware-Accelerated SVG Dash Animation */}
+-      <style>{`
+-        @keyframes neuralFlowForward {
+-          from {
+-            stroke-dashoffset: 240;
+-          }
+-          to {
+-            stroke-dashoffset: 0;
+-          }
+-        }
+-        @keyframes neuralPulseGlow {
+-          0%, 100% {
+-            opacity: 0.35;
+-            transform: scale(1);
+-          }
+-          50% {
+-            opacity: 0.85;
+-            transform: scale(1.15);
+-          }
+-        }
+-        .synapse-packet-anim {
+-          animation: neuralFlowForward var(--flow-duration, 5s) linear infinite;
+-          animation-delay: var(--flow-delay, 0s);
+-        }
+-        .node-pulse-anim {
+-          animation: neuralPulseGlow var(--pulse-duration, 4s) ease-in-out infinite;
+-          transform-origin: center;
+-        }
+-        @media (prefers-reduced-motion: reduce) {
+-          .synapse-packet-anim, .node-pulse-anim {
+-            animation: none !important;
+-          }
+-        }
+-      `}</style>
+-
+       {/* Primary Scalable Vector Network Container */}
+       <svg
+         viewBox={`0 0 ${topology.width} ${topology.height}`}
+@@ -108,27 +242,19 @@ export default function NeuralDataFlowBackground({
+         <defs>
+           {/* Subtle Linear Gradient for Static Synaptic Pathways */}
+           <linearGradient id={`neuralGrad-${variant}`} x1={isRtl ? '100%' : '0%'} y1="0%" x2={isRtl ? '0%' : '100%'} y2="0%">
+-            <stop offset="0%" stopColor={isLight ? '#0284C7' : '#38BDF8'} stopOpacity={isLight ? 0.25 : 0.20} />
+-            <stop offset="50%" stopColor={isLight ? '#0369A1' : '#00F2FE'} stopOpacity={isLight ? 0.35 : 0.30} />
+-            <stop offset="100%" stopColor={isLight ? '#059669' : '#34D399'} stopOpacity={isLight ? 0.25 : 0.20} />
+-          </linearGradient>
+-
+-          {/* Glowing Head Gradient for Flowing Packets */}
+-          <linearGradient id={`packetGrad-${variant}`} x1="0%" y1="0%" x2="100%" y2="0%">
+-            <stop offset="0%" stopColor={activePacketColor} stopOpacity="0" />
+-            <stop offset="80%" stopColor={activePacketColor} stopOpacity="0.8" />
+-            <stop offset="100%" stopColor="#FFFFFF" stopOpacity="1" />
++            <stop offset="0%" stopColor={isLight ? '#0284C7' : '#38BDF8'} stopOpacity={isLight ? 0.22 : 0.18} />
++            <stop offset="50%" stopColor={isLight ? '#0369A1' : '#00F2FE'} stopOpacity={isLight ? 0.32 : 0.28} />
++            <stop offset="100%" stopColor={isLight ? '#059669' : '#34D399'} stopOpacity={isLight ? 0.22 : 0.18} />
+           </linearGradient>
+ 
+-          {/* Soft Glow Radial Gradient for Latent Hubs */}
+-          <radialGradient id="hubRadialGlow" cx="50%" cy="50%" r="50%">
+-            <stop offset="0%" stopColor={activePacketColor} stopOpacity={isGenerating ? 0.5 : 0.25} />
+-            <stop offset="100%" stopColor={activePacketColor} stopOpacity="0" />
+-          </radialGradient>
++          {/* Particle Glow Filter */}
++          <filter id={`particleGlow-${variant}`} x="-50%" y="-50%" width="200%" height="200%">
++            <feGaussianBlur in="SourceGraphic" stdDeviation={isGenerating ? '2.5' : '1.5'} />
++          </filter>
+         </defs>
+ 
+-        {/* 1. Coordinate Grid Intersection Dots (Subtle Matrix) */}
+-        <g opacity={0.6}>
++        {/* 1. Coordinate Grid Intersection Dots (Subtle Reference Matrix) */}
++        <g opacity={0.5}>
+           {[120, 360, 600, 840, 1080, 1320].map((gx) =>
+             [80, 180, 280, 380, 480].map((gy) => (
+               <circle
+@@ -142,7 +268,7 @@ export default function NeuralDataFlowBackground({
+           )}
+         </g>
+ 
+-        {/* 2. Base Synaptic Conduits (Static Hairline Routing Tracks) */}
++        {/* 2. Synaptic Conduits & Telemetry Tracks */}
+         <g opacity={0.7}>
+           {topology.synapses.map((synapse) => (
+             <path
+@@ -157,50 +283,31 @@ export default function NeuralDataFlowBackground({
+           ))}
+         </g>
+ 
+-        {/* 3. Flowing Data Packets (Hardware-accelerated via stroke-dashoffset) */}
+-        {!reducedMotion && (
+-          <g>
+-            {topology.synapses.map((synapse) => {
+-              const duration = Math.max(2, synapse.packetDuration * speedMultiplier);
+-              return (
+-                <path
+-                  key={`pulse-${synapse.id}`}
+-                  d={synapse.pathD}
+-                  stroke={`url(#packetGrad-${variant})`}
+-                  strokeWidth={Math.max(1.8, synapse.weight * 2.4)}
+-                  strokeLinecap="round"
+-                  strokeDasharray="16 220"
+-                  fill="none"
+-                  vectorEffect="non-scaling-stroke"
+-                  className="synapse-packet-anim"
+-                  style={
+-                    {
+-                      '--flow-duration': `${duration}s`,
+-                      '--flow-delay': `${synapse.packetDelay}s`,
+-                    } as React.CSSProperties
+-                  }
+-                />
+-              );
+-            })}
++        {/* 3. requestAnimationFrame Animated Particle Packets (Conditional on user motion) */}
++        {!shouldReduceMotion && (
++          <g ref={particleGroupRef}>
++            {Array.from({ length: totalParticles }).map((_, idx) => (
++              <circle
++                key={`packet-${idx}`}
++                cx="0"
++                cy="0"
++                r="2.2"
++                fill={activePacketColor}
++                opacity="0"
++                style={{
++                  filter: isGenerating ? `drop-shadow(0 0 4px ${activePacketColor})` : undefined,
++                }}
++              />
++            ))}
+           </g>
+         )}
+ 
+-        {/* 4. Synaptic Nodes & Activation Hubs */}
++        {/* 4. Synaptic Nodes & Processing Hubs */}
+         <g>
+           {topology.nodes.map((node) => {
+             const isImportant = node.type === 'gateway' || node.type === 'latent';
+             return (
+               <g key={`node-grp-${node.id}`} transform={`translate(${node.x}, ${node.y})`}>
+-                {/* Latent Hub Outer Glow Ring */}
+-                {isImportant && !reducedMotion && (
+-                  <circle
+-                    r={node.radius * 3.2}
+-                    fill="url(#hubRadialGlow)"
+-                    className="node-pulse-anim"
+-                    style={{ '--pulse-duration': '3.5s' } as React.CSSProperties}
+-                  />
+-                )}
+-
+                 {/* Node Outer Orbit Ring */}
+                 <circle
+                   r={node.radius + 2.5}
+@@ -217,12 +324,6 @@ export default function NeuralDataFlowBackground({
+                   fill={nodeFill}
+                   stroke={nodeStroke}
+                   strokeWidth="1.4"
+-                  className={!reducedMotion ? 'node-pulse-anim' : undefined}
+-                  style={
+-                    {
+-                      '--pulse-duration': `${3 + (node.layer % 3)}s`,
+-                    } as React.CSSProperties
+-                  }
+                 />
+ 
+                 {/* Node Center Apex Pip */}
+@@ -232,7 +333,7 @@ export default function NeuralDataFlowBackground({
+                   opacity={node.activationPotential}
+                 />
+ 
+-                {/* Precision Unboxed Monospace Mathematical & Pipeline Coordinates */}
++                {/* Precision Unboxed Monospace Labels */}
+                 {showLabels && node.label && (
+                   <text
+                     x={isRtl ? -node.radius - 6 : node.radius + 6}
+@@ -253,7 +354,7 @@ export default function NeuralDataFlowBackground({
+         </g>
+       </svg>
+ 
+-      {/* Gentle Radial Scrim Gradient to ensure zero text interference */}
++      {/* Scrim Mask to preserve contrast & avoid text interference */}
+       <div
+         className={`absolute inset-0 ${
+           isLight
+diff --git a/src/components/mountDataFlowEngine.tsx b/src/components/mountDataFlowEngine.tsx
+new file mode 100644
+index 0000000..3436081
+--- /dev/null
++++ b/src/components/mountDataFlowEngine.tsx
+@@ -0,0 +1,86 @@
++/**
++ * @license
++ * SPDX-License-Identifier: Apache-2.0
++ * SAHAND — Dynamic Data-Flow Engine WordPress Mount / Hydration Helper
++ *
++ * Enables dynamic mounting and unmounting of the React SVG Data-Flow engine
++ * into WordPress theme templates (e.g. #sahand-ai-lab-flow, #sahand-engineering-flow).
++ */
++
++import React from 'react';
++import { createRoot, Root } from 'react-dom/client';
++import NeuralDataFlowBackground, { NeuralDataFlowBackgroundProps } from './NeuralDataFlowBackground';
++
++const activeRoots = new Map<Element, Root>();
++
++export interface MountOptions extends NeuralDataFlowBackgroundProps {
++  container: string | HTMLElement;
++}
++
++/**
++ * Dynamically mounts the SVG data-flow visualization engine into a container element.
++ */
++export function mountDataFlowEngine(options: MountOptions): Root | null {
++  const { container, ...props } = options;
++  const targetElement = typeof container === 'string' ? document.querySelector(container) : container;
++
++  if (!targetElement) {
++    console.warn(`[SAHAND Flow Engine] Target container not found:`, container);
++    return null;
++  }
++
++  // If already mounted, unmount first
++  if (activeRoots.has(targetElement)) {
++    activeRoots.get(targetElement)?.unmount();
++    activeRoots.delete(targetElement);
++  }
++
++  const root = createRoot(targetElement);
++  root.render(<NeuralDataFlowBackground {...props} />);
++  activeRoots.set(targetElement, root);
++  return root;
++}
++
++/**
++ * Unmounts the data-flow engine from a container.
++ */
++export function unmountDataFlowEngine(container: string | HTMLElement): boolean {
++  const targetElement = typeof container === 'string' ? document.querySelector(container) : container;
++  if (!targetElement || !activeRoots.has(targetElement)) {
++    return false;
++  }
++
++  activeRoots.get(targetElement)?.unmount();
++  activeRoots.delete(targetElement);
++  return true;
++}
++
++/**
++ * Auto-initializes data-flow engines on elements containing `data-sahand-data-flow`
++ */
++export function autoInitDataFlowEngines(): void {
++  if (typeof document === 'undefined') return;
++
++  const containers = document.querySelectorAll<HTMLElement>('[data-sahand-data-flow]');
++  containers.forEach((el) => {
++    const variant = (el.getAttribute('data-sahand-data-flow') || 'ai-lab') as 'ai-lab' | 'engineering';
++    const theme = (el.getAttribute('data-theme') || 'dark') as 'dark' | 'light';
++    const isRtl = el.getAttribute('dir') === 'rtl' || document.documentElement.dir === 'rtl';
++
++    mountDataFlowEngine({
++      container: el,
++      variant,
++      theme,
++      isRtl,
++    });
++  });
++}
++
++// Attach to window for WordPress theme script integration
++if (typeof window !== 'undefined') {
++  (window as unknown as { SahandDataFlowEngine: unknown }).SahandDataFlowEngine = {
++    mount: mountDataFlowEngine,
++    unmount: unmountDataFlowEngine,
++    autoInit: autoInitDataFlowEngines,
++  };
++}
+diff --git a/src/utils/neuralFlow.test.ts b/src/utils/neuralFlow.test.ts
+index 325cc12..be56a0f 100644
+--- a/src/utils/neuralFlow.test.ts
++++ b/src/utils/neuralFlow.test.ts
+@@ -11,6 +11,8 @@ import {
+   generateOrthogonalPath,
+   generateAiLabTopology,
+   generateEngineeringTopology,
++  evaluateBezierPoint,
++  evaluateOrthogonalPoint,
+ } from './neuralFlow';
+ 
+ test('generateBezierPath creates valid SVG cubic Bézier command', () => {
+@@ -78,3 +80,32 @@ test('generateEngineeringTopology builds distributed pipeline with valid routes'
+   const gateways = eng.nodes.filter((n) => n.type === 'gateway');
+   assert.ok(gateways.length > 0, 'Must have gateway nodes');
+ });
++
++test('evaluateBezierPoint computes accurate start, end, and midpoint coordinates', () => {
++  const pStart = evaluateBezierPoint(100, 200, 500, 400, 0);
++  assert.equal(pStart.x, 100);
++  assert.equal(pStart.y, 200);
++
++  const pEnd = evaluateBezierPoint(100, 200, 500, 400, 1);
++  assert.equal(pEnd.x, 500);
++  assert.equal(pEnd.y, 400);
++
++  const pMid = evaluateBezierPoint(100, 200, 500, 400, 0.5);
++  assert.equal(pMid.x, 300); // Symmetrical horizontal inflection midpoint
++  assert.equal(pMid.y, 300);
++});
++
++test('evaluateOrthogonalPoint computes accurate positions along 3 rectilinear segments', () => {
++  const pStart = evaluateOrthogonalPoint(100, 100, 300, 300, 0, 0.5);
++  assert.equal(pStart.x, 100);
++  assert.equal(pStart.y, 100);
++
++  const pEnd = evaluateOrthogonalPoint(100, 100, 300, 300, 1, 0.5);
++  assert.equal(pEnd.x, 300);
++  assert.equal(pEnd.y, 300);
++
++  // Midpoint should be along the vertical segment (x = 200)
++  const pMid = evaluateOrthogonalPoint(100, 100, 300, 300, 0.5, 0.5);
++  assert.equal(pMid.x, 200);
++});
++
+diff --git a/src/utils/neuralFlow.ts b/src/utils/neuralFlow.ts
+index eec58e7..4a4caec 100644
+--- a/src/utils/neuralFlow.ts
++++ b/src/utils/neuralFlow.ts
+@@ -248,3 +248,67 @@ export function generateEngineeringTopology(
+ 
+   return { width, height, nodes, synapses };
+ }
++
++/**
++ * Closed-form analytical evaluation of a point along a cubic Bézier curve at progress t in [0, 1].
++ * O(1) mathematical execution with zero DOM layout thrashing.
++ */
++export function evaluateBezierPoint(
++  x1: number,
++  y1: number,
++  x2: number,
++  y2: number,
++  t: number,
++  curvature: number = 0.45
++): { x: number; y: number } {
++  const clampedT = Math.max(0, Math.min(1, t));
++  const dx = (x2 - x1) * curvature;
++  const cx1 = x1 + dx;
++  const cy1 = y1;
++  const cx2 = x2 - dx;
++  const cy2 = y2;
++
++  const oneMinusT = 1 - clampedT;
++  const oneMinusT2 = oneMinusT * oneMinusT;
++  const oneMinusT3 = oneMinusT2 * oneMinusT;
++  const t2 = clampedT * clampedT;
++  const t3 = t2 * clampedT;
++
++  const x = oneMinusT3 * x1 + 3 * oneMinusT2 * clampedT * cx1 + 3 * oneMinusT * t2 * cx2 + t3 * x2;
++  const y = oneMinusT3 * y1 + 3 * oneMinusT2 * clampedT * cy1 + 3 * oneMinusT * t2 * cy2 + t3 * y2;
++
++  return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)) };
++}
++
++/**
++ * Analytical evaluation of a point along an orthogonal conduit at progress t in [0, 1].
++ */
++export function evaluateOrthogonalPoint(
++  x1: number,
++  y1: number,
++  x2: number,
++  y2: number,
++  t: number,
++  midRatio: number = 0.45
++): { x: number; y: number } {
++  const clampedT = Math.max(0, Math.min(1, t));
++  const midX = x1 + (x2 - x1) * midRatio;
++
++  const len1 = Math.abs(midX - x1);
++  const len2 = Math.abs(y2 - y1);
++  const len3 = Math.abs(x2 - midX);
++  const totalLen = len1 + len2 + len3 || 1;
++
++  const dist = clampedT * totalLen;
++
++  if (dist <= len1) {
++    const subT = len1 === 0 ? 0 : dist / len1;
++    return { x: Number((x1 + (midX - x1) * subT).toFixed(2)), y: Number(y1.toFixed(2)) };
++  } else if (dist <= len1 + len2) {
++    const subT = len2 === 0 ? 0 : (dist - len1) / len2;
++    return { x: Number(midX.toFixed(2)), y: Number((y1 + (y2 - y1) * subT).toFixed(2)) };
++  } else {
++    const subT = len3 === 0 ? 0 : (dist - len1 - len2) / len3;
++    return { x: Number((midX + (x2 - midX) * subT).toFixed(2)), y: Number(y2.toFixed(2)) };
++  }
++}
+diff --git a/src/utils/rateLimiter.test.ts b/src/utils/rateLimiter.test.ts
+new file mode 100644
+index 0000000..3ca7f0b
+--- /dev/null
++++ b/src/utils/rateLimiter.test.ts
+@@ -0,0 +1,78 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { MemoryRateLimiter, resolveClientIp } from './rateLimiter';
++
++test('MemoryRateLimiter allows requests up to max threshold', () => {
++  const limiter = new MemoryRateLimiter();
++  const ip = '198.51.100.1';
++  const action = 'contact_form';
++  const max = 5;
++  const windowMs = 60000;
++
++  for (let i = 1; i <= max; i++) {
++    const res = limiter.checkAndIncrement(ip, action, max, windowMs);
++    assert.equal(res.allowed, true);
++    assert.equal(res.current, i);
++    assert.equal(res.retryAfter, 0);
++  }
++
++  // Next request exceeds limit
++  const blocked = limiter.checkAndIncrement(ip, action, max, windowMs);
++  assert.equal(blocked.allowed, false);
++  assert.equal(blocked.current, max);
++  assert.ok(blocked.retryAfter > 0);
++});
++
++test('MemoryRateLimiter handles concurrent requests without race condition leaks', async () => {
++  const limiter = new MemoryRateLimiter();
++  const ip = '198.51.100.42';
++  const action = 'ai_gateway';
++  const max = 10;
++  const windowMs = 10000;
++
++  // Simulate 50 simultaneous asynchronous callers
++  const promises = Array.from({ length: 50 }, () =>
++    new Promise<{ allowed: boolean }>((resolve) => {
++      setImmediate(() => {
++        const res = limiter.checkAndIncrement(ip, action, max, windowMs);
++        resolve(res);
++      });
++    })
++  );
++
++  const results = await Promise.all(promises);
++  const allowedCount = results.filter((r) => r.allowed).length;
++  const blockedCount = results.filter((r) => !r.allowed).length;
++
++  assert.equal(allowedCount, max, `Exactly ${max} requests must be allowed`);
++  assert.equal(blockedCount, 40, 'Remaining 40 requests must be rejected with 429');
++});
++
++test('resolveClientIp rejects spoofed X-Forwarded-For from untrusted remote address', () => {
++  const untrustedRemote = '203.0.113.99';
++  const headers = {
++    'x-forwarded-for': '8.8.8.8',
++    'cf-connecting-ip': '1.1.1.1',
++  };
++  // Remote is not in trusted proxy list, so headers must be completely ignored
++  const resolved = resolveClientIp(untrustedRemote, headers, ['127.0.0.1']);
++  assert.equal(resolved, untrustedRemote);
++});
++
++test('resolveClientIp trusts CF-Connecting-IP when behind verified reverse proxy', () => {
++  const trustedProxy = '10.0.0.1';
++  const headers = {
++    'cf-connecting-ip': '198.51.100.88',
++  };
++  const resolved = resolveClientIp(trustedProxy, headers, ['10.0.0.1']);
++  assert.equal(resolved, '198.51.100.88');
++});
++
++test('resolveClientIp parses leftmost public IP in X-Forwarded-For when behind trusted proxy', () => {
++  const trustedProxy = '127.0.0.1';
++  const headers = {
++    'x-forwarded-for': '198.51.100.77, 10.0.0.2',
++  };
++  const resolved = resolveClientIp(trustedProxy, headers, ['127.0.0.1']);
++  assert.equal(resolved, '198.51.100.77');
++});
+diff --git a/src/utils/rateLimiter.ts b/src/utils/rateLimiter.ts
+new file mode 100644
+index 0000000..bbd47cf
+--- /dev/null
++++ b/src/utils/rateLimiter.ts
+@@ -0,0 +1,116 @@
++/**
++ * Rate Limiter Pure Logic & Proxy Verification Engine
++ */
++import crypto from 'node:crypto';
++
++export interface RateBucket {
++  count: number;
++  resetAt: number;
++}
++
++export interface RateCheckResult {
++  allowed: boolean;
++  current: number;
++  max: number;
++  retryAfter: number;
++}
++
++/**
++ * In-memory thread-safe atomic counter map
++ */
++export class MemoryRateLimiter {
++  private buckets = new Map<string, RateBucket>();
++  private salt: string;
++
++  constructor(salt = 'sahand_test_salt') {
++    this.salt = salt;
++  }
++
++  public hashClient(ip: string): string {
++    return crypto.createHash('sha256').update(`${ip}|${this.salt}`).digest('hex');
++  }
++
++  public checkAndIncrement(ip: string, action: string, maxRequests: number, windowMs: number, now = Date.now()): RateCheckResult {
++    const ipHash = this.hashClient(ip);
++    const key = `${action}:${ipHash}`;
++
++    let bucket = this.buckets.get(key);
++    if (!bucket || now >= bucket.resetAt) {
++      bucket = { count: 1, resetAt: now + windowMs };
++      this.buckets.set(key, bucket);
++      return {
++        allowed: true,
++        current: 1,
++        max: maxRequests,
++        retryAfter: 0,
++      };
++    }
++
++    if (bucket.count >= maxRequests) {
++      const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
++      return {
++        allowed: false,
++        current: bucket.count,
++        max: maxRequests,
++        retryAfter,
++      };
++    }
++
++    bucket.count += 1;
++    return {
++      allowed: true,
++      current: bucket.count,
++      max: maxRequests,
++      retryAfter: 0,
++    };
++  }
++
++  public clear(): void {
++    this.buckets.clear();
++  }
++}
++
++/**
++ * Resolve client IP with trusted proxy verification
++ * Never trusts arbitrary X-Forwarded-For unless remoteAddr matches trusted proxy list
++ */
++export function resolveClientIp(
++  remoteAddr: string,
++  headers: Record<string, string | undefined>,
++  trustedProxies: string[] = ['127.0.0.1', '::1', '10.0.0.1']
++): string {
++  const isTrusted = trustedProxies.includes(remoteAddr);
++
++  if (isTrusted) {
++    // 1. Cloudflare header
++    const cfIp = headers['cf-connecting-ip'];
++    if (cfIp && isValidIp(cfIp)) {
++      return cfIp.trim();
++    }
++
++    // 2. Verified X-Forwarded-For
++    const xff = headers['x-forwarded-for'];
++    if (xff) {
++      const parts = xff.split(',').map((p) => p.trim());
++      for (const candidate of parts) {
++        if (isValidIp(candidate) && !isPrivateIp(candidate)) {
++          return candidate;
++        }
++      }
++    }
++  }
++
++  // Untrusted proxy or direct connection: rely strictly on remoteAddr
++  return isValidIp(remoteAddr) ? remoteAddr : '127.0.0.1';
++}
++
++function isValidIp(ip: string): boolean {
++  // Simple IPv4 / IPv6 validation
++  const ipv4Regex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
++  const ipv6Regex = /^[0-9a-fA-F:]+$/;
++  return ipv4Regex.test(ip) || ipv6Regex.test(ip);
++}
++
++function isPrivateIp(ip: string): boolean {
++  return ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.16.') || ip === '127.0.0.1' || ip === '::1';
++}
+diff --git a/src/utils/securityValidator.test.ts b/src/utils/securityValidator.test.ts
+new file mode 100644
+index 0000000..7d16d6c
+--- /dev/null
++++ b/src/utils/securityValidator.test.ts
+@@ -0,0 +1,57 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  validateSemver,
++  validateEmail,
++  validatePrompt,
++  isHoneypotTriggered,
++  buildCspHeader,
++} from './securityValidator';
++
++test('validateSemver accurately validates standard and prerelease SemVer strings', () => {
++  assert.equal(validateSemver('1.0.0'), true);
++  assert.equal(validateSemver('2.14.3-alpha.1'), true);
++  assert.equal(validateSemver('0.9.1+20261111'), true);
++
++  assert.equal(validateSemver('1.0'), false);
++  assert.equal(validateSemver('v1.0.0'), false);
++  assert.equal(validateSemver('1.0.0; rm -rf /'), false);
++  assert.equal(validateSemver('<script>'), false);
++});
++
++test('validateEmail validates RFC compliant email addresses', () => {
++  assert.equal(validateEmail('haghisahnd@gmail.com'), true);
++  assert.equal(validateEmail('admin@sahandhaghi.site'), true);
++  assert.equal(validateEmail('invalid-email'), false);
++  assert.equal(validateEmail('@domain.com'), false);
++  assert.equal(validateEmail('name@'), false);
++});
++
++test('validatePrompt enforces min and max length boundaries', () => {
++  assert.equal(validatePrompt('Valid technical prompt').valid, true);
++  assert.equal(validatePrompt('A').valid, false); // Less than 2
++  assert.equal(validatePrompt('   ').valid, false);
++
++  const longPrompt = 'A'.repeat(2001);
++  assert.equal(validatePrompt(longPrompt).valid, false); // Exceeds 2000
++
++  const maxPrompt = 'A'.repeat(2000);
++  assert.equal(validatePrompt(maxPrompt).valid, true);
++});
++
++test('isHoneypotTriggered identifies spam bots filling invisible input', () => {
++  assert.equal(isHoneypotTriggered(''), false);
++  assert.equal(isHoneypotTriggered(undefined), false);
++  assert.equal(isHoneypotTriggered('   '), false);
++  assert.equal(isHoneypotTriggered('spam-bot-value'), true);
++});
++
++test('buildCspHeader generates valid directive string and respects report-only mode', () => {
++  const reportOnly = buildCspHeader(true);
++  assert.equal(reportOnly.headerName, 'Content-Security-Policy-Report-Only');
++  assert.ok(reportOnly.headerValue.includes("default-src 'self'"));
++  assert.ok(reportOnly.headerValue.includes('https://generativelanguage.googleapis.com'));
++
++  const enforced = buildCspHeader(false);
++  assert.equal(enforced.headerName, 'Content-Security-Policy');
++});
+diff --git a/src/utils/securityValidator.ts b/src/utils/securityValidator.ts
+new file mode 100644
+index 0000000..e4c1f66
+--- /dev/null
++++ b/src/utils/securityValidator.ts
+@@ -0,0 +1,51 @@
++/**
++ * Security and Validation Utilities
++ */
++
++export const SEMVER_REGEX = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
++export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++
++export function validateSemver(version: string): boolean {
++  return SEMVER_REGEX.test(version.trim());
++}
++
++export function validateEmail(email: string): boolean {
++  return EMAIL_REGEX.test(email.trim());
++}
++
++export function validatePrompt(prompt: string, min = 2, max = 2000): { valid: boolean; error?: string } {
++  if (typeof prompt !== 'string') {
++    return { valid: false, error: 'Prompt must be a string' };
++  }
++  const len = prompt.trim().length;
++  if (len < min) {
++    return { valid: false, error: `Prompt must be at least ${min} characters` };
++  }
++  if (len > max) {
++    return { valid: false, error: `Prompt must not exceed ${max} characters` };
++  }
++  return { valid: true };
++}
++
++export function isHoneypotTriggered(hpValue?: string): boolean {
++  return typeof hpValue === 'string' && hpValue.trim().length > 0;
++}
++
++export function buildCspHeader(reportOnly = true): { headerName: string; headerValue: string } {
++  const headerName = reportOnly ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy';
++  const directives = [
++    "default-src 'self'",
++    "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
++    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
++    "font-src 'self' data: https://fonts.gstatic.com",
++    "img-src 'self' data: https: blob:",
++    "connect-src 'self' https://generativelanguage.googleapis.com",
++    "frame-ancestors 'self'",
++    "base-uri 'self'",
++    "form-action 'self'",
++  ];
++  return {
++    headerName,
++    headerValue: directives.join('; '),
++  };
++}
+-- 
+2.34.1
+

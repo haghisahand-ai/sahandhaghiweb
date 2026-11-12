@@ -9,6 +9,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import SahandLogo, { SahandEmblem, SahandFavicon16, SahandLogoSystemInspector } from './components/SahandLogo';
 import NeuralDataFlowBackground from './components/NeuralDataFlowBackground';
+import { BuildStatusDashboard } from './components/BuildStatusDashboard';
+import { AiGatewayDiagnosticTool } from './components/AiGatewayDiagnosticTool';
+import { WordPressEditionModal } from './components/WordPressEditionModal';
 import { 
   ShieldCheck, 
   Cpu, 
@@ -630,6 +633,10 @@ export default function App() {
   const [aiPrompt, setAiPrompt] = useState<string>('');
   const [aiGenerating, setAiGenerating] = useState<boolean>(false);
   const [aiOutput, setAiOutput] = useState<string | null>(null);
+  const [inferenceTelemetry, setInferenceTelemetry] = useState<any>(null);
+
+  // WordPress Edition modal state
+  const [isWpModalOpen, setIsWpModalOpen] = useState<boolean>(false);
 
   // Contact form submission state
   const [contactStatus, setContactStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
@@ -779,13 +786,57 @@ export default function App() {
     setInPortalMode(true);
   };
 
-  // Run AI sandbox simulation
-  const handleRunAiInference = () => {
+  // Run AI sandbox inference with real backend gateway and diagnostic telemetry
+  const handleRunAiInference = async (customPrompt?: string, customModel?: string) => {
+    const promptToSend = (customPrompt !== undefined ? customPrompt : aiPrompt) || currentContent.aiDefaultPrompt;
+    const modelToSend = customModel || aiModel;
     setAiGenerating(true);
-    setTimeout(() => {
-      setAiGenerating(false);
+    setAiOutput(null);
+    const start = Date.now();
+
+    try {
+      const res = await fetch('/api/gemini/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: promptToSend,
+          task: 'market-analysis-and-engineering',
+          language: selectedLang,
+          model: modelToSend,
+        }),
+      });
+
+      const data = await res.json();
+      const latency = Date.now() - start;
+
+      setInferenceTelemetry({
+        model: modelToSend,
+        latency_ms: latency,
+        source: data.source || (res.ok ? 'gemini-live' : 'error'),
+        httpStatus: res.status,
+        status: res.ok ? 'SUCCESS' : 'FAILED',
+        diagnostics: data.diagnostics || null,
+      });
+
+      if (res.ok && data.text) {
+        setAiOutput(data.text);
+      } else {
+        setAiOutput(data.text || data.error || 'Inference execution completed with fallback response.');
+      }
+    } catch (err: unknown) {
+      const latency = Date.now() - start;
+      setInferenceTelemetry({
+        model: modelToSend,
+        latency_ms: latency,
+        source: 'client-error',
+        httpStatus: 0,
+        status: 'NETWORK_ERROR',
+        diagnostics: { error: err instanceof Error ? err.message : 'Fetch failed' },
+      });
       setAiOutput(currentContent.aiSimulatedResult);
-    }, 700);
+    } finally {
+      setAiGenerating(false);
+    }
   };
 
   return (
@@ -1060,6 +1111,18 @@ export default function App() {
                     TR
                   </button>
                 </div>
+
+                {/* WordPress Edition Modal Trigger */}
+                <button
+                  onClick={() => setIsWpModalOpen(true)}
+                  title="WordPress Production CMS Edition & Manifest"
+                  className="px-3 py-1.5 text-xs font-mono text-emerald-300 hover:text-white bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-400/30 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+                >
+                  <Server className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">
+                    {selectedLang === 'fa' ? 'نسخه وردپرس' : selectedLang === 'tr' ? 'WordPress Sürümü' : 'WordPress Edition'}
+                  </span>
+                </button>
 
                 {/* SVG Logo System Inspector Trigger */}
                 <button
@@ -1496,7 +1559,7 @@ export default function App() {
                             className="flex-1 bg-white/[0.03] border border-white/[0.1] rounded-xl px-4 py-3 text-sm text-white font-mono focus:outline-hidden focus:border-sky-400 transition-colors"
                           />
                           <button
-                            onClick={handleRunAiInference}
+                            onClick={() => handleRunAiInference()}
                             disabled={aiGenerating}
                             className="px-6 py-3 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-medium text-sm font-mono flex items-center gap-2 transition-all cursor-pointer shadow-[0_0_15px_rgba(2,132,199,0.3)] shrink-0"
                           >
@@ -1526,6 +1589,19 @@ export default function App() {
                         </div>
                       )}
 
+                    </div>
+
+                    {/* Integrated Build Status Dashboard & AI Gateway Diagnostic Telemetry */}
+                    <div className="mt-8 space-y-8">
+                      <BuildStatusDashboard
+                        lang={selectedLang}
+                        onOpenWpModal={() => setIsWpModalOpen(true)}
+                      />
+                      <AiGatewayDiagnosticTool
+                        lang={selectedLang}
+                        lastInferenceTelemetry={inferenceTelemetry}
+                        onRunTestInference={(model, prompt) => handleRunAiInference(prompt, model)}
+                      />
                     </div>
 
                   </div>
@@ -1726,7 +1802,7 @@ export default function App() {
                           className="flex-1 bg-white/[0.03] border border-white/[0.1] rounded-xl px-4 py-3 text-sm text-white font-mono focus:outline-hidden focus:border-sky-400 transition-colors"
                         />
                         <button
-                          onClick={handleRunAiInference}
+                          onClick={() => handleRunAiInference()}
                           disabled={aiGenerating}
                           className="px-6 py-3 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-medium text-sm font-mono flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_0_15px_rgba(2,132,199,0.3)] shrink-0"
                         >
@@ -1759,6 +1835,19 @@ export default function App() {
                         {currentContent.aiSimulatedResult}
                       </div>
                     )}
+                  </div>
+
+                  {/* Build Status Dashboard & AI Gateway Diagnostic Tool in Dedicated Tab */}
+                  <div className="mt-8 space-y-8">
+                    <BuildStatusDashboard
+                      lang={selectedLang}
+                      onOpenWpModal={() => setIsWpModalOpen(true)}
+                    />
+                    <AiGatewayDiagnosticTool
+                      lang={selectedLang}
+                      lastInferenceTelemetry={inferenceTelemetry}
+                      onRunTestInference={(model, prompt) => handleRunAiInference(prompt, model)}
+                    />
                   </div>
                 </div>
               </section>
@@ -1894,6 +1983,13 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* WordPress Edition Modal */}
+      <WordPressEditionModal
+        isOpen={isWpModalOpen}
+        onClose={() => setIsWpModalOpen(false)}
+        lang={selectedLang}
+      />
     </div>
   );
 }

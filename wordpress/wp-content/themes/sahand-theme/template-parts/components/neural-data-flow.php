@@ -24,7 +24,7 @@ $active_color = $is_light ? '#0284C7' : '#38BDF8';
 $node_fill = $is_light ? '#FFFFFF' : '#070B14';
 $node_stroke = $is_light ? '#0284C7' : '#38BDF8';
 ?>
-<div class="sahand-neural-bg absolute inset-0 overflow-hidden pointer-events-none select-none z-0" aria-hidden="true" data-variant="<?php echo esc_attr($variant); ?>">
+<div class="sahand-neural-bg absolute inset-0 overflow-hidden pointer-events-none select-none z-0" aria-hidden="true" data-sahand-data-flow="<?php echo esc_attr($variant); ?>" data-theme="<?php echo esc_attr($theme); ?>">
   <svg viewBox="0 0 1440 500" preserveAspectRatio="xMidYMid slice" class="w-full h-full opacity-60" fill="none" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="<?php echo $gradient_id; ?>" x1="<?php echo $is_rtl ? '100%' : '0%'; ?>" y1="0%" x2="<?php echo $is_rtl ? '0%' : '100%'; ?>" y2="0%">
