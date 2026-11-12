@@ -122,9 +122,13 @@
     }
   }
 
-  if (!isMotionReduced) {
-    render();
+  if (motionToggleBtn) {
+    motionToggleBtn.textContent = isMotionReduced ? 'MOTION: OFF' : 'MOTION: ON';
+    motionToggleBtn.setAttribute('aria-pressed', isMotionReduced ? 'true' : 'false');
   }
+
+  // Render one static frame when the operating system requests reduced motion.
+  render();
 
   // Toggle Motion
   if (motionToggleBtn) {
@@ -141,7 +145,8 @@
     });
   }
 
-  // Language Card Hover & Click Handling
+  // Language cards use their server-rendered URLs. This preserves WordPress
+  // subdirectory installs and Polylang's translated front-page destinations.
   var langCards = document.querySelectorAll('.lang-card');
   langCards.forEach(function(card) {
     var lang = card.getAttribute('data-lang');
@@ -155,16 +160,6 @@
     card.addEventListener('mouseleave', function() {
       if (headlineElem) {
         headlineElem.textContent = headlines.en;
-      }
-    });
-
-    card.addEventListener('click', function(e) {
-      e.preventDefault();
-      // Whitelist validation against Open Redirect
-      if (lang === 'fa' || lang === 'en' || lang === 'tr') {
-        // Set secure language preference cookie
-        document.cookie = 'pll_language=' + encodeURIComponent(lang) + '; path=/; max-age=31536000; SameSite=Lax; Secure';
-        window.location.href = '/' + lang + '/';
       }
     });
   });
