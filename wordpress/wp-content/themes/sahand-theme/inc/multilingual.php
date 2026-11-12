@@ -72,7 +72,7 @@ function sahand_render_language_switcher() {
         $active_class = $is_current ? ' current-lang' : '';
         $aria_current = $is_current ? ' aria-current="true"' : '';
 
-        $target_url = home_url('/' . $code . '/');
+        $target_url = sahand_get_language_home_url($code);
         if (function_exists('pll_the_languages')) {
             $translations = pll_the_languages(array('raw' => 1));
             if (!empty($translations[$code]['url'])) {
