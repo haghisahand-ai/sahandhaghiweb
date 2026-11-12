@@ -9,12 +9,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// 1. Root Language & Intro Routing:
-// If visitor accesses bare root domain with no language cookie, present the approved cinematic intro portal
-$has_lang_cookie = isset($_COOKIE['pll_language']) && in_array($_COOKIE['pll_language'], array('fa', 'en', 'tr'), true);
-$is_root_without_cookie = is_front_page() && !$has_lang_cookie && !isset($_GET['lang']);
-
-if ($is_root_without_cookie) {
+// 1. Show the intro portal only at the bare site root.
+// Language-prefixed front pages must render the actual localized homepage,
+// even when the visitor has no Polylang cookie.
+if (function_exists('sahand_is_root_intro_request') && sahand_is_root_intro_request()) {
     get_header();
     get_template_part('template-parts/intro/intro-portal');
     get_footer();
@@ -40,7 +38,7 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
           <span>● <?php esc_html_e('DISTRIBUTED SYSTEMS · AI RESEARCH · ALGORITHMIC ENGINES', 'sahand-theme'); ?></span>
         </div>
         <div class="font-mono" style="font-size: 0.75rem; color: rgba(255, 255, 255, 0.45);">
-          <span>SYS.ID // SH-2026</span> · <span>LAT 37.75°N // LNG 46.42°E</span>
+          <span>SAHAND // PERSONAL TECHNOLOGY HUB</span> · <span>FA / EN / TR</span>
         </div>
       </div>
 
@@ -86,28 +84,28 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
         <!-- Right Column: System Matrix Artwork -->
         <div style="background: linear-gradient(180deg, #0F1626 0%, #070A11 100%); border: 1px solid var(--color-border-dark); border-radius: var(--radius-lg); padding: 2rem; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);">
           <div class="font-mono" style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--color-border-dark); padding-bottom: 1rem; margin-bottom: 1.5rem;">
-            <span style="color: var(--color-accent-electric);">NODE TOPOLOGY MATRIX</span>
-            <span style="color: var(--color-success);">OPTIMAL</span>
+            <span style="color: var(--color-accent-electric);">PLATFORM ARCHITECTURE</span>
+            <span style="color: var(--color-warning);">EVOLVING</span>
           </div>
 
           <div class="font-mono" style="font-size: 0.8125rem; display: flex; flex-direction: column; gap: 0.85rem;">
             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
-              <span>MicroMap Order Flow Engine</span>
-              <span style="color: var(--color-accent-electric);">Python 3.12</span>
+              <span>Trading Systems Research</span>
+              <span style="color: var(--color-accent-electric);">Research</span>
             </div>
             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
-              <span>Sovereign AI Gateway</span>
-              <span style="color: var(--color-success);">Gemini 2.5 Server</span>
+              <span>AI Integration Layer</span>
+              <span style="color: var(--color-warning);">Planned</span>
             </div>
             <div style="padding: 0.85rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-sm); display: flex; justify-content: space-between;">
-              <span>Decoupled CMS Platform</span>
-              <span style="color: #C084FC;">WP Theme + Core</span>
+              <span>WordPress Platform</span>
+              <span style="color: #C084FC;">Theme + Core Plugin</span>
             </div>
           </div>
 
           <div class="font-mono" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border-dark); display: flex; justify-content: space-between; font-size: 0.75rem; color: rgba(255, 255, 255, 0.45);">
-            <span>SESSION: LONDON / NY</span>
-            <span style="color: var(--color-accent-electric); font-weight: 700;">TICK: 0.8ms</span>
+            <span>ARCHITECTURE: MODULAR</span>
+            <span style="color: var(--color-accent-electric); font-weight: 700;">STATUS: IN DEVELOPMENT</span>
           </div>
         </div>
 
@@ -136,9 +134,9 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
             <?php esc_html_e('Artificial Intelligence', 'sahand-theme'); ?>
           </h3>
           <p style="font-size: 0.875rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1rem;">
-            <?php esc_html_e('Server-side LLM inference pipelines, vector embeddings, and prompt defense.', 'sahand-theme'); ?>
+            <?php esc_html_e('AI application research, model integration patterns, and secure server-side architecture.', 'sahand-theme'); ?>
           </p>
-          <div class="badge badge-tech">Gemini 2.5 · Vector RAG</div>
+          <div class="badge badge-tech">AI · LLM · RAG</div>
         </div>
 
         <div class="sahand-card">
@@ -146,9 +144,9 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
             <?php esc_html_e('Financial Engineering', 'sahand-theme'); ?>
           </h3>
           <p style="font-size: 0.875rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1rem;">
-            <?php esc_html_e('Algorithmic trading systems, London/NY session filters, and sub-millisecond order routing.', 'sahand-theme'); ?>
+            <?php esc_html_e('Research into algorithmic trading architectures, market data processing, and execution workflows.', 'sahand-theme'); ?>
           </p>
-          <div class="badge badge-tech">Python · MicroMap</div>
+          <div class="badge badge-tech">Python · Quant Research</div>
         </div>
 
         <div class="sahand-card">
@@ -156,9 +154,9 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
             <?php esc_html_e('Cybersecurity', 'sahand-theme'); ?>
           </h3>
           <p style="font-size: 0.875rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1rem;">
-            <?php esc_html_e('STRIDE threat modeling, least-privilege capability architecture, and zero-trust verification.', 'sahand-theme'); ?>
+            <?php esc_html_e('Threat modeling, access-control design, secure coding, and defense-in-depth practices.', 'sahand-theme'); ?>
           </p>
-          <div class="badge badge-tech">STRIDE · Nonces · CSP</div>
+          <div class="badge badge-tech">STRIDE · Access Control · AppSec</div>
         </div>
 
         <div class="sahand-card">
@@ -166,9 +164,9 @@ $current_lang = function_exists('sahand_get_current_lang') ? sahand_get_current_
             <?php esc_html_e('Systems Architecture', 'sahand-theme'); ?>
           </h3>
           <p style="font-size: 0.875rem; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 1rem;">
-            <?php esc_html_e('Decoupled WordPress themes & plugins designed for standard high-availability hosting.', 'sahand-theme'); ?>
+            <?php esc_html_e('Custom WordPress architecture, PHP components, content modeling, and maintainable integrations.', 'sahand-theme'); ?>
           </p>
-          <div class="badge badge-tech">PHP 8.2 · MySQL 8.0</div>
+          <div class="badge badge-tech">WordPress · PHP · MySQL</div>
         </div>
 
       </div>

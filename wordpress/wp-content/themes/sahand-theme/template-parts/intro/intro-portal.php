@@ -72,7 +72,7 @@ if (!defined('ABSPATH')) {
     <div class="intro-lang-grid" role="group" aria-label="<?php esc_attr_e('Select Language', 'sahand-theme'); ?>">
       
       <!-- Persian /fa/ -->
-      <a href="<?php echo esc_url(home_url('/fa/')); ?>" class="lang-card" data-lang="fa" dir="rtl">
+      <a href="<?php echo esc_url(sahand_get_language_home_url('fa')); ?>" class="lang-card" data-lang="fa" dir="rtl">
         <div class="lang-card-header">
           <span class="lang-native-name font-persian">فارسی</span>
           <span class="lang-tag font-mono">/fa/ · RTL</span>
@@ -85,7 +85,7 @@ if (!defined('ABSPATH')) {
       </a>
 
       <!-- English /en/ -->
-      <a href="<?php echo esc_url(home_url('/en/')); ?>" class="lang-card" data-lang="en" dir="ltr">
+      <a href="<?php echo esc_url(sahand_get_language_home_url('en')); ?>" class="lang-card" data-lang="en" dir="ltr">
         <div class="lang-card-header">
           <span class="lang-native-name font-latin">English</span>
           <span class="lang-tag font-mono">/en/ · LTR</span>
@@ -98,7 +98,7 @@ if (!defined('ABSPATH')) {
       </a>
 
       <!-- Turkish /tr/ -->
-      <a href="<?php echo esc_url(home_url('/tr/')); ?>" class="lang-card" data-lang="tr" dir="ltr">
+      <a href="<?php echo esc_url(sahand_get_language_home_url('tr')); ?>" class="lang-card" data-lang="tr" dir="ltr">
         <div class="lang-card-header">
           <span class="lang-native-name font-latin">Türkçe</span>
           <span class="lang-tag font-mono">/tr/ · LTR</span>
