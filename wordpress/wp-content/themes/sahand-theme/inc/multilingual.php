@@ -56,6 +56,24 @@ function sahand_is_root_intro_request() {
 /**
  * Renders the accessible trilingual switcher component.
  */
+/**
+ * Returns the localized homepage URL, respecting Polylang URL settings.
+ */
+function sahand_get_language_home_url($language) {
+    if (!in_array($language, array('fa', 'en', 'tr'), true)) {
+        $language = 'fa';
+    }
+
+    if (function_exists('pll_home_url')) {
+        $url = pll_home_url($language);
+        if (is_string($url) && '' !== $url) {
+            return $url;
+        }
+    }
+
+    return home_url('/' . $language . '/');
+}
+
 function sahand_render_language_switcher() {
     $current_lang = sahand_get_current_lang();
 
