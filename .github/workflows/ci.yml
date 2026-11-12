@@ -1,0 +1,67 @@
+name: SAHAND CI
+
+on:
+  push:
+    branches:
+      - audit-fixes
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sahand-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wordpress-php-lint:
+    name: WordPress PHP syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: none
+          coverage: none
+
+      - name: Lint all PHP files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find wordpress -type f -name '*.php' -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No PHP files found under wordpress/"
+            exit 1
+          fi
+          for file in "${files[@]}"; do
+            php -l "$file"
+          done
+
+  frontend:
+    name: TypeScript and Vite build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
