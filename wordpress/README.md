@@ -23,14 +23,14 @@ The theme currently uses Polylang APIs for language detection and translated-pag
 
 1. Back up the WordPress database and files.
 2. Install and activate Polylang. Add Persian, English, and Turkish languages using the exact slugs above; choose Persian as the default.
-3. Upload and activate **SAHAND Theme** from Appearance → Themes.
-4. Upload and activate **SAHAND Core** from Plugins.
-5. In Settings → Reading, assign a static front page after creating the localized home pages.
-6. Create the required pages for each language (Home, About, Projects, Launchpad, AI Lab, Engineering, Insights, Contact) and link translations in Polylang.
-7. Set the primary and footer menus under Appearance → Menus and assign the corresponding theme locations.
-8. Set Settings → Permalinks to **Post name**, then save once after activating the plugin to refresh rewrite rules.
-9. Add the shortcode `[sahand_contact_form]` to the Contact page content in each language.
-10. Configure WordPress outgoing email using a trusted SMTP provider and verify delivery on staging.
+3. In Polylang language URL settings, enable language codes in URLs for all languages, including the default Persian language. This is required because the approved intro portal occupies the bare site root while localized homepages use `/fa/`, `/en/`, and `/tr/` routes.\n4. Upload and activate **SAHAND Theme** from Appearance → Themes.
+5. Upload and activate **SAHAND Core** from Plugins.
+6. In Settings → Reading, assign a static front page after creating the localized home pages.
+7. Create the required pages for each language (Home, About, Projects, Launchpad, AI Lab, Engineering, Insights, Contact) and link translations in Polylang.
+8. Set the primary and footer menus under Appearance → Menus and assign the corresponding theme locations.
+9. Set Settings → Permalinks to **Post name**, then save once after activating the plugin to refresh rewrite rules.
+10. Add the shortcode `[sahand_contact_form]` to the Contact page content in each language.
+11. Configure WordPress outgoing email using a trusted SMTP provider and verify delivery on staging.
 
 ## Intro portal
 
